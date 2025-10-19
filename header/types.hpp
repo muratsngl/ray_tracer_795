@@ -32,13 +32,6 @@ struct Mat3f{
        m31=0,m32=0,m33=0;
 };
 
-
-struct Vertex{
-    Vec3f position;
-    //will be used for smooth shading
-    Vec3f normal;
-};
-
 // Holds all properties related to a single material.
 struct Material {
     std::string type;
@@ -50,13 +43,6 @@ struct Material {
     fl phong_exponent;
     fl refraction_index;
     fl absorption_index;
-    int id;
-};
-
-// Represents a point light source in the scene.
-struct PointLight {
-    Vec3f position;
-    Vec3f intensity;
     int id;
 };
 
@@ -78,44 +64,31 @@ struct Ray{
     Vec3f direction;
 };
 
+//RAY PACKETS FOR PARALLELIZATION USING SIMD
+struct alignas(32) RP8{
+    fl o_x[8] = {0.f};
+    fl o_y[8] = {0.f};
+    fl o_z[8] = {0.f};
+    fl d_x[8] = {0.f};
+    fl d_y[8] = {0.f};
+    fl d_z[8] = {0.f};
+
+    fl t_min[8] = {__builtin_inff(), __builtin_inff(), __builtin_inff(), __builtin_inff(), __builtin_inff(), __builtin_inff(), __builtin_inff(), __builtin_inff()};
+    fl hit_norm_x[8] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+    fl hit_norm_y[8] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+    fl hit_norm_z[8] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+    int mat_id[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
+
+};
+
 struct HitRecord{
     Vec3f hit_point;
     Vec3f normal;
     fl t;
     int material_id;
-    };
-
-
-// Represents a sphere object.
-struct Sphere {
-    fl radius;
-    int id;
-    int material_id;
-    int center_vertex_id;
 };
 
-// Represents a single triangle.
-struct Triangle {
-    Vec3i indices; // Vertex indices
-    Vec3f normal;
-    int id;
-    int material_id;
-};
-struct Face{
-    Vec3i indices; // Vertex indices
-    //will be used for flat shading.
-    Vec3f normal;
-    
-};
-
-// Represents a mesh object composed of multiple triangles (faces).
-struct Mesh {
-    std::vector<Face> faces; // Each Vec3i contains the vertex indices for one triangle face
-    int id;
-    int material_id;
-};
-
-// Represents an infinite plane object.
+// Represents an infinite plane object (still using AoS - not many planes in typical scenes).
 struct Plane {
     Vec3f normal;
     int id;
@@ -123,34 +96,8 @@ struct Plane {
     int point_vertex_id; // ID of a vertex that lies on the plane
 };
 
-// The main struct that holds all scene data, parsed from the JSON file.
-struct Scene {
-    // Scene elements
-    std::vector<Camera> cameras;
-    std::vector<PointLight> point_lights;
-    std::vector<Material> materials;
-    std::vector<Vertex> vertex_data;
-    std::vector<Sphere> spheres;
-    std::vector<Triangle> triangles;
-    std::vector<Mesh> meshes;
-    std::vector<Plane> planes;
-
-
-    VertexData vertex_data__;
-    PointLightData point_light_data__;
-    SphereData sphere_data__;
-    TriangleData triangle_data__;
-
-    // General scene settings
-    Vec3f background_color;
-    Vec3f ambient_light;
-    fl shadow_ray_epsilon;
-    fl intersection_test_epsilon;
-    int max_recursion_depth;
-};
-
+// SoA (Structure of Arrays) data structures
 struct VertexData{
-
     std::vector<fl> v_pos_x;
     std::vector<fl> v_pos_y;
     std::vector<fl> v_pos_z;
@@ -170,14 +117,13 @@ struct PointLightData{
     std::vector<fl> pl_intensity_b;
 
     std::vector<int> pl_id;
-    
 };
 
 struct SphereData{
-    std::vector<int>  sphere_id;
+    std::vector<int> sphere_id;
     std::vector<int> sphere_mat_id;
     std::vector<int> sphere_center_vertex_id;
-    std::vector<float> sphere_radius;
+    std::vector<fl> sphere_radius_sq;
 };
 
 struct TriangleData{
@@ -191,7 +137,6 @@ struct TriangleData{
 
     std::vector<int> triangle_id;
     std::vector<int> triangle_material_id;
-    
 };
 
 struct PlaneData{
@@ -204,6 +149,27 @@ struct PlaneData{
     std::vector<int> plane_id;
 
     std::vector<int> plane_material_id;
+};
+
+// The main struct that holds all scene data, parsed from the JSON file.
+struct Scene {
+    // SoA (Structure of Arrays) for data-oriented design
+    VertexData vertex_data__;
+    PointLightData point_light_data__;
+    SphereData sphere_data__;
+    TriangleData triangle_data__;
+
+    // Legacy AoS structures still used (TODO: migrate to SoA)
+    std::vector<Camera> cameras;
+    std::vector<Material> materials;
+    std::vector<Plane> planes;
+
+    // General scene settings
+    Vec3f background_color;
+    Vec3f ambient_light;
+    fl shadow_ray_epsilon;
+    fl intersection_test_epsilon;
+    int max_recursion_depth;
 };
 
 

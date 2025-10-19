@@ -35,19 +35,6 @@ static Vec2i parseVec2i(const std::string& str) {
     return vec;
 }
 
-// Parses a string like "v0 v1 v2" into a Vec3i, converting from 1-based to 0-based indices
-static Vec3i parseIndices(const std::string& str) {
-    Vec3i vec;
-    std::stringstream ss(str);
-    ss >> vec.v0 >> vec.v1 >> vec.v2;
-    // The file format uses 1-based indexing, so we convert to 0-based.
-    vec.v0--; 
-    vec.v1--; 
-    vec.v2--;
-    return vec;
-}
-
-
 class Parser {
 public:
     static Scene parseScene(const std::string& filepath) {
@@ -98,11 +85,15 @@ public:
                 std::stringstream vertexStream(vertexDataStr);
                 fl x, y, z;
                 while (vertexStream >> x >> y >> z) {
+                    // Directly populate SoA structure
                     scene.vertex_data__.v_pos_x.push_back(x);
-
                     scene.vertex_data__.v_pos_y.push_back(y);
-
                     scene.vertex_data__.v_pos_z.push_back(z);
+                    
+                    // Initialize normals to zero (will be accumulated later)
+                    scene.vertex_data__.v_nor_x.push_back(0.0f);
+                    scene.vertex_data__.v_nor_y.push_back(0.0f);
+                    scene.vertex_data__.v_nor_z.push_back(0.0f);
                 }
             }
         }
@@ -140,22 +131,26 @@ public:
 
         // --- Parse Lights (Generalized) ---
         auto parsePointLight = [&](const json& light) {
-            PointLight pl;
-            pl.id = std::stoi(light.at("_id").get<std::string>());
-            pl.position = parseVec3f(light.at("Position").get<std::string>());
-            pl.intensity = parseVec3f(light.at("Intensity").get<std::string>());
-            scene.point_light_data__.pl_id.push_back(pl.id);
-            scene.point_light_data__.pl_pos_x.push_back(pl.position.x);
-
-            scene.point_light_data__.pl_pos_y.push_back(pl.position.y);
-
-            scene.point_light_data__.pl_pos_z.push_back(pl.position.z);
+            int id = std::stoi(light.at("_id").get<std::string>());
             
-            scene.point_light_data__.pl_intensity_r.push_back(pl.intensity.x);
+            // Parse position directly into scalars
+            fl pos_x, pos_y, pos_z;
+            std::stringstream pos_stream(light.at("Position").get<std::string>());
+            pos_stream >> pos_x >> pos_y >> pos_z;
             
-            scene.point_light_data__.pl_intensity_g.push_back(pl.intensity.y);
+            // Parse intensity directly into scalars
+            fl int_r, int_g, int_b;
+            std::stringstream int_stream(light.at("Intensity").get<std::string>());
+            int_stream >> int_r >> int_g >> int_b;
             
-            scene.point_light_data__.pl_intensity_b.push_back(pl.intensity.z);
+            // Directly populate SoA structure
+            scene.point_light_data__.pl_id.push_back(id);
+            scene.point_light_data__.pl_pos_x.push_back(pos_x);
+            scene.point_light_data__.pl_pos_y.push_back(pos_y);
+            scene.point_light_data__.pl_pos_z.push_back(pos_z);
+            scene.point_light_data__.pl_intensity_r.push_back(int_r);
+            scene.point_light_data__.pl_intensity_g.push_back(int_g);
+            scene.point_light_data__.pl_intensity_b.push_back(int_b);
         };
         if (sceneData.contains("Lights") && sceneData["Lights"].contains("PointLight")) {
             processOneOrMany(sceneData.at("Lights").at("PointLight"), parsePointLight);
@@ -216,47 +211,73 @@ public:
 
             if (objects.contains("Sphere")) {
                 auto parseSphere = [&](const json& obj) {
-                    Sphere sphere;
-                    sphere.id = std::stoi(obj.at("_id").get<std::string>());
-                    sphere.material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
-                    sphere.center_vertex_id = std::stoi(obj.at("Center").get<std::string>()) - 1;
-                    sphere.radius = std::stof(obj.at("Radius").get<std::string>());
-                    scene.sphere_data__.sphere_radius.push_back(sphere.radius);
-                    scene.sphere_data__.sphere_center_vertex_id.push_back(sphere.center_vertex_id);
-                    scene.sphere_data__.sphere_id.push_back(sphere.id);
-                    scene.sphere_data__.sphere_mat_id.push_back(sphere.material_id);
+                    int id = std::stoi(obj.at("_id").get<std::string>());
+                    int material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
+                    int center_vertex_id = std::stoi(obj.at("Center").get<std::string>()) - 1;
+                    fl radius = std::stof(obj.at("Radius").get<std::string>());
                     
-                    
+                    // Directly populate SoA structure
+                    scene.sphere_data__.sphere_id.push_back(id);
+                    scene.sphere_data__.sphere_mat_id.push_back(material_id);
+                    scene.sphere_data__.sphere_center_vertex_id.push_back(center_vertex_id);
+                    scene.sphere_data__.sphere_radius_sq.push_back(radius*radius);
                 };
                 processOneOrMany(objects.at("Sphere"), parseSphere);
             }
             
             if (objects.contains("Triangle")) {
                 auto parseTriangle = [&](const json& obj) {
-                    Triangle triangle;
-                    triangle.id = std::stoi(obj.at("_id").get<std::string>());
-                    triangle.material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
-                    triangle.indices = parseIndices(obj.at("Indices").get<std::string>());
-                    triangle.normal = normalize(cross(scene.vertex_data[triangle.indices.v2].position-scene.vertex_data[triangle.indices.v1].position,
-                        scene.vertex_data[triangle.indices.v0].position-scene.vertex_data[triangle.indices.v1].position));
-                    scene.triangle_data__.tri_norm_x.push_back(triangle.normal.x);    
-                    scene.triangle_data__.tri_norm_y.push_back(triangle.normal.y);    
-                    scene.triangle_data__.tri_norm_z.push_back(triangle.normal.z);
-                    scene.triangle_data__.vo_ind.push_back(triangle.indices.v0);    
-                    scene.triangle_data__.v1_ind.push_back(triangle.indices.v1);
-                    scene.triangle_data__.v2_ind.push_back(triangle.indices.v2);
-                    scene.triangle_data__.triangle_id.push_back(triangle.id);
-                    scene.triangle_data__.triangle_material_id.push_back(triangle.material_id);
+                    int id = std::stoi(obj.at("_id").get<std::string>());
+                    int material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
+                    
+                    // Parse indices directly
+                    int v0, v1, v2;
+                    std::stringstream ind_stream(obj.at("Indices").get<std::string>());
+                    ind_stream >> v0 >> v1 >> v2;
+                    v0--; v1--; v2--;  // Convert to 0-based indexing
+                    
+                    // Get vertex positions from SoA
+                    fl v0_x = scene.vertex_data__.v_pos_x[v0];
+                    fl v0_y = scene.vertex_data__.v_pos_y[v0];
+                    fl v0_z = scene.vertex_data__.v_pos_z[v0];
+                    
+                    fl v1_x = scene.vertex_data__.v_pos_x[v1];
+                    fl v1_y = scene.vertex_data__.v_pos_y[v1];
+                    fl v1_z = scene.vertex_data__.v_pos_z[v1];
+                    
+                    fl v2_x = scene.vertex_data__.v_pos_x[v2];
+                    fl v2_y = scene.vertex_data__.v_pos_y[v2];
+                    fl v2_z = scene.vertex_data__.v_pos_z[v2];
+                    
+                    // Calculate edges using scalar operations
+                    fl edge1_x, edge1_y, edge1_z;
+                    fl edge2_x, edge2_y, edge2_z;
+                    subtract_scalar(v2_x, v2_y, v2_z, v1_x, v1_y, v1_z, edge1_x, edge1_y, edge1_z);
+                    subtract_scalar(v0_x, v0_y, v0_z, v1_x, v1_y, v1_z, edge2_x, edge2_y, edge2_z);
+                    
+                    // Calculate and normalize normal
+                    fl norm_x, norm_y, norm_z;
+                    cross_scalar(edge1_x, edge1_y, edge1_z, edge2_x, edge2_y, edge2_z, norm_x, norm_y, norm_z);
+                    normalize_scalar(norm_x, norm_y, norm_z);
+                    
+                    // Directly populate SoA structure
+                    scene.triangle_data__.vo_ind.push_back(v0);
+                    scene.triangle_data__.v1_ind.push_back(v1);
+                    scene.triangle_data__.v2_ind.push_back(v2);
+                    scene.triangle_data__.tri_norm_x.push_back(norm_x);
+                    scene.triangle_data__.tri_norm_y.push_back(norm_y);
+                    scene.triangle_data__.tri_norm_z.push_back(norm_z);
+                    scene.triangle_data__.triangle_id.push_back(id);
+                    scene.triangle_data__.triangle_material_id.push_back(material_id);
                 };
                 processOneOrMany(objects.at("Triangle"), parseTriangle);
             }
             
-            // Add generalized loops for Mesh and Plane as well
+            // Parse Mesh - push all faces directly into TriangleData
             if (objects.contains("Mesh")) {
                 auto parseMesh = [&](const json& obj) {
-                    Mesh mesh;
-                    mesh.id = std::stoi(obj.at("_id").get<std::string>());
-                    mesh.material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
+                    int mesh_id = std::stoi(obj.at("_id").get<std::string>());
+                    int material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
                     
                     std::string facesDataStr;
                     const auto& facesData = obj.at("Faces");
@@ -271,29 +292,66 @@ public:
                     if (!facesDataStr.empty()) {
                         std::stringstream faceStream(facesDataStr);
                         int v0, v1, v2;
+                        int triangle_counter = 0;
                         while (faceStream >> v0 >> v1 >> v2) {
                             // Convert from 1-based to 0-based indexing
                             int index_v0 = v0 - 1, index_v1 = v1 - 1, index_v2 = v2 - 1;
-                            Vertex& v0_ = scene.vertex_data[index_v0];
-                            Vertex& v1_ = scene.vertex_data[index_v1];
-                            Vertex& v2_ = scene.vertex_data[index_v2];
                             
-                            // Calculate face normal and area
-                            Vec3f normal = cross(v1_.position - v0_.position, v2_.position - v0_.position);
-                            mesh.faces.push_back({
-                                {index_v0, index_v1, index_v2},
-                                {normalize(normal)}
-                            });
-
+                            // Get vertex positions from SoA
+                            fl v0_x = scene.vertex_data__.v_pos_x[index_v0];
+                            fl v0_y = scene.vertex_data__.v_pos_y[index_v0];
+                            fl v0_z = scene.vertex_data__.v_pos_z[index_v0];
                             
+                            fl v1_x = scene.vertex_data__.v_pos_x[index_v1];
+                            fl v1_y = scene.vertex_data__.v_pos_y[index_v1];
+                            fl v1_z = scene.vertex_data__.v_pos_z[index_v1];
                             
-                            // Accumulate area-weighted normals for each vertex
-                            v0_.normal += normal;
-                            v1_.normal += normal;
-                            v2_.normal += normal;
+                            fl v2_x = scene.vertex_data__.v_pos_x[index_v2];
+                            fl v2_y = scene.vertex_data__.v_pos_y[index_v2];
+                            fl v2_z = scene.vertex_data__.v_pos_z[index_v2];
+                            
+                            // Calculate edges using scalar operations
+                            fl edge1_x, edge1_y, edge1_z;
+                            fl edge2_x, edge2_y, edge2_z;
+                            subtract_scalar(v1_x, v1_y, v1_z, v0_x, v0_y, v0_z, edge1_x, edge1_y, edge1_z);
+                            subtract_scalar(v2_x, v2_y, v2_z, v0_x, v0_y, v0_z, edge2_x, edge2_y, edge2_z);
+                            
+                            // Calculate face normal (not normalized yet for area weighting)
+                            fl face_norm_x, face_norm_y, face_norm_z;
+                            cross_scalar(edge1_x, edge1_y, edge1_z, edge2_x, edge2_y, edge2_z, 
+                                       face_norm_x, face_norm_y, face_norm_z);
+                            
+                            // Store normalized face normal in TriangleData
+                            fl norm_x = face_norm_x, norm_y = face_norm_y, norm_z = face_norm_z;
+                            normalize_scalar(norm_x, norm_y, norm_z);
+                            
+                            // Push triangle directly into TriangleData (not into separate mesh structure)
+                            scene.triangle_data__.vo_ind.push_back(index_v0);
+                            scene.triangle_data__.v1_ind.push_back(index_v1);
+                            scene.triangle_data__.v2_ind.push_back(index_v2);
+                            scene.triangle_data__.tri_norm_x.push_back(norm_x);
+                            scene.triangle_data__.tri_norm_y.push_back(norm_y);
+                            scene.triangle_data__.tri_norm_z.push_back(norm_z);
+                            // Use mesh_id * 1000000 + face_index as unique triangle ID
+                            scene.triangle_data__.triangle_id.push_back(mesh_id * 1000000 + triangle_counter);
+                            scene.triangle_data__.triangle_material_id.push_back(material_id);
+                            
+                            // Accumulate area-weighted normals for each vertex (using unnormalized cross product)
+                            scene.vertex_data__.v_nor_x[index_v0] += face_norm_x;
+                            scene.vertex_data__.v_nor_y[index_v0] += face_norm_y;
+                            scene.vertex_data__.v_nor_z[index_v0] += face_norm_z;
+                            
+                            scene.vertex_data__.v_nor_x[index_v1] += face_norm_x;
+                            scene.vertex_data__.v_nor_y[index_v1] += face_norm_y;
+                            scene.vertex_data__.v_nor_z[index_v1] += face_norm_z;
+                            
+                            scene.vertex_data__.v_nor_x[index_v2] += face_norm_x;
+                            scene.vertex_data__.v_nor_y[index_v2] += face_norm_y;
+                            scene.vertex_data__.v_nor_z[index_v2] += face_norm_z;
+                            
+                            triangle_counter++;
                         }
                     }
-                    scene.meshes.push_back(mesh);
                 };
                 processOneOrMany(objects.at("Mesh"), parseMesh);
             }
@@ -310,9 +368,15 @@ public:
                 processOneOrMany(objects.at("Plane"), parsePlane);
             }
         }
-        for(auto& v:scene.vertex_data){
-            normalize_on_place(v.normal);
+        
+        // Normalize all accumulated vertex normals in SoA
+        size_t vertex_count = scene.vertex_data__.v_pos_x.size();
+        for(size_t i = 0; i < vertex_count; ++i){
+            normalize_scalar(scene.vertex_data__.v_nor_x[i], 
+                           scene.vertex_data__.v_nor_y[i], 
+                           scene.vertex_data__.v_nor_z[i]);
         }
+        
         return scene;
     }
 };

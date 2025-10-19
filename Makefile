@@ -5,13 +5,15 @@ CXX = g++
 SRCDIR = ./source
 HDRDIR = ./header
 OBJDIR = ./obj
+THIRDPARTY = ./third_party
 
 # Define compiler flags
 # -std=c++17: Use the C++17 standard
 # -Wall -Wextra: Enable most warnings
 # -g: Include debug symbols
 # -I$(HDRDIR): Tell the compiler to look for headers in the ./header directory
-CXXFLAGS = -std=c++17 -Wall -Wextra -g -I$(HDRDIR)
+# -I$(THIRDPARTY)/include: Tell the compiler to look for third-party headers (xsimd)
+CXXFLAGS = -std=c++17 -Wall -Wextra -g -I$(HDRDIR) -I$(THIRDPARTY)/include
 
 # Define the name of the final executable
 TARGET = raytracer

@@ -261,7 +261,7 @@ public:
                     normalize_scalar(norm_x, norm_y, norm_z);
                     
                     // Directly populate SoA structure
-                    scene.triangle_data__.vo_ind.push_back(v0);
+                    scene.triangle_data__.v0_ind.push_back(v0);
                     scene.triangle_data__.v1_ind.push_back(v1);
                     scene.triangle_data__.v2_ind.push_back(v2);
                     scene.triangle_data__.tri_norm_x.push_back(norm_x);
@@ -326,7 +326,7 @@ public:
                             normalize_scalar(norm_x, norm_y, norm_z);
                             
                             // Push triangle directly into TriangleData (not into separate mesh structure)
-                            scene.triangle_data__.vo_ind.push_back(index_v0);
+                            scene.triangle_data__.v0_ind.push_back(index_v0);
                             scene.triangle_data__.v1_ind.push_back(index_v1);
                             scene.triangle_data__.v2_ind.push_back(index_v2);
                             scene.triangle_data__.tri_norm_x.push_back(norm_x);
@@ -358,12 +358,20 @@ public:
             
             if (objects.contains("Plane")) {
                 auto parsePlane = [&](const json& obj) {
-                    Plane plane;
-                    plane.id = std::stoi(obj.at("_id").get<std::string>());
-                    plane.material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
-                    plane.point_vertex_id = std::stoi(obj.at("Point").get<std::string>()) - 1;
-                    plane.normal = parseVec3f(obj.at("Normal").get<std::string>());
-                    scene.planes.push_back(plane);
+                    // Parse all data into local variables first
+                    int id = std::stoi(obj.at("_id").get<std::string>());
+                    int material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
+                    int point_vertex_id = std::stoi(obj.at("Point").get<std::string>()) - 1;
+                    Vec3f normal = parseVec3f(obj.at("Normal").get<std::string>());
+
+                    // Directly populate the SoA structure (scene.plane_data__)
+                    scene.plane_data__.plane_id.push_back(id);
+                    scene.plane_data__.plane_material_id.push_back(material_id);
+                    scene.plane_data__.plane_point_vertex_id.push_back(point_vertex_id);
+                    
+                    scene.plane_data__.plane_norm_x.push_back(normal.x);
+                    scene.plane_data__.plane_norm_y.push_back(normal.y);
+                    scene.plane_data__.plane_norm_z.push_back(normal.z);
                 };
                 processOneOrMany(objects.at("Plane"), parsePlane);
             }

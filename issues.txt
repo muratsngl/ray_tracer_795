@@ -1,0 +1,6 @@
+1. Material type interface is not supported for now 24/10 
+2. UBYTE SHOULD BE the color format
+3. Variable length arrays are not a part of standart cpp
+4. phong exponent is a little dense for my code
+5. shadow acne
+6. plane intersection is not there(it turns out they are triangles after all) SOLVED: The problem was that I was using interpolated vertex normals for intersections and shading both. for geometric operations truen normal of the triangle should be used.

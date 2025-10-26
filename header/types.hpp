@@ -46,6 +46,14 @@ struct Material {
     int id;
 };
 
+struct ColorBlock{
+    unsigned char rgb[24]={};
+};
+
+struct ColorBlockFl{
+    fl rgb[24]={};
+};
+
 // Defines the properties of a single camera.
 struct Camera {
     std::string image_name;
@@ -77,6 +85,9 @@ struct alignas(32) RP8{
     fl hit_norm_x[8] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
     fl hit_norm_y[8] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
     fl hit_norm_z[8] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+    fl hit_pos_x[8] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+    fl hit_pos_y[8] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+    fl hit_pos_z[8] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
     int mat_id[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
 
 };
@@ -127,7 +138,7 @@ struct SphereData{
 };
 
 struct TriangleData{
-    std::vector<int> vo_ind;
+    std::vector<int> v0_ind;
     std::vector<int> v1_ind;
     std::vector<int> v2_ind;
 
@@ -158,12 +169,12 @@ struct Scene {
     PointLightData point_light_data__;
     SphereData sphere_data__;
     TriangleData triangle_data__;
+    PlaneData plane_data__;
 
-    // Legacy AoS structures still used (TODO: migrate to SoA)
+    
     std::vector<Camera> cameras;
     std::vector<Material> materials;
-    std::vector<Plane> planes;
-
+    
     // General scene settings
     Vec3f background_color;
     Vec3f ambient_light;

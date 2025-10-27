@@ -91,9 +91,12 @@ int main(int argc, char* argv[]) {
                                 
                         return_closest_hit(ray_package,scene,scene.vertex_data__);
                         
+                        shade_recursive(ray_package,scene,cb);
+                        
+                        
                        
                         
-                        shade(ray_package,scene,cb);
+                        //shade_trad(ray_package,scene,cb);
                         memcpy(&image.data()[current_mem_ptr],cb.rgb,12*sizeof(unsigned char));
                         current_mem_ptr += cam.image_resolution.x*3;
                         memcpy(&image.data()[current_mem_ptr],&cb.rgb[12],12*sizeof(unsigned char));

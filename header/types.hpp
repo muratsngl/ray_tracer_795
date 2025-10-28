@@ -54,6 +54,49 @@ struct ColorBlockFl{
     fl rgb[24]={};
 };
 
+
+struct SoARayQueue{
+    std::vector<fl> o_x;
+    std::vector<fl> o_y;
+    std::vector<fl> o_z;
+    std::vector<fl> d_x;
+    std::vector<fl> d_y;
+    std::vector<fl> d_z;
+    std::vector<fl> tp_r;
+    std::vector<fl> tp_g;
+    std::vector<fl> tp_b;
+    std::vector<int> depth;
+    std::vector<int> pixel_index; // Index to track which pixel (0-7) this ray belongs to
+
+    void push(fl ox, fl oy, fl oz, fl dx, fl dy, fl dz, fl tr, fl tg, fl tb, int d, int idx) {
+        o_x.push_back(ox); o_y.push_back(oy); o_z.push_back(oz);
+        d_x.push_back(dx); d_y.push_back(dy); d_z.push_back(dz);
+        tp_r.push_back(tr); tp_g.push_back(tg); tp_b.push_back(tb);
+        depth.push_back(d);
+        pixel_index.push_back(idx);
+    }
+
+    bool pop(fl& ox, fl& oy, fl& oz, fl& dx, fl& dy, fl& dz, fl& tr, fl& tg, fl& tb, int& d, int& idx) {
+        if (is_empty()) return false;
+        ox = o_x.back(); o_x.pop_back();
+        oy = o_y.back(); o_y.pop_back();
+        oz = o_z.back(); o_z.pop_back();
+        dx = d_x.back(); d_x.pop_back();
+        dy = d_y.back(); d_y.pop_back();
+        dz = d_z.back(); d_z.pop_back();
+        tr = tp_r.back(); tp_r.pop_back();
+        tg = tp_g.back(); tp_g.pop_back();
+        tb = tp_b.back(); tp_b.pop_back();
+        d = depth.back(); depth.pop_back();
+        idx = pixel_index.back(); pixel_index.pop_back();
+        return true;
+    }
+
+    bool is_empty() {
+        return o_x.empty();
+    }
+};
+
 // Defines the properties of a single camera.
 struct Camera {
     std::string image_name;
@@ -89,6 +132,8 @@ struct alignas(32) RP8{
     fl hit_pos_y[8] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
     fl hit_pos_z[8] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
     int mat_id[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
+    int depth[8] = {0, 0, 0, 0, 0, 0, 0, 0};  // Bounce depth for each ray
+    int pixel_index[8] = {0, 1, 2, 3, 4, 5, 6, 7}; // Pixel index for each ray (0-7)
 
 };
 

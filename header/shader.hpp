@@ -13,7 +13,70 @@ void inline convert_to_unsigned_char(const ColorBlockFl& color_block_int, ColorB
         color_block.rgb[i] = static_cast<unsigned char>(value);
     }
 }
+// --- Dielectric Helper Functions ---
 
+// Calculates reflection direction wr = d - 2n(n.d)
+inline void calculate_reflection_direction(
+    fl incident_dx, fl incident_dy, fl incident_dz,
+    fl normal_x, fl normal_y, fl normal_z,
+    fl& reflect_dx, fl& reflect_dy, fl& reflect_dz)
+{
+    fl n_dot_d = dot_scalar(normal_x, normal_y, normal_z, incident_dx, incident_dy, incident_dz);
+    reflect_dx = incident_dx - 2.0f * normal_x * n_dot_d;
+    reflect_dy = incident_dy - 2.0f * normal_y * n_dot_d;
+    reflect_dz = incident_dz - 2.0f * normal_z * n_dot_d;
+}
+
+// Calculates Fresnel reflectance Fr for dielectric and checks for TIR
+// Returns Fr, outputs cos_phi via reference
+inline fl calculate_dielectric_fresnel(
+    fl cos_theta, // Should be positive angle between normal and -incident_dir
+    fl n1, fl n2,
+    bool& is_tir, fl& cos_phi)
+{
+    is_tir = false;
+    cos_phi = 0.0f; // Initialize
+
+    // Check for TIR (only possible if n1 > n2)
+    fl eta = n1 / n2;
+    fl sin_theta_sq = 1.0f - cos_theta * cos_theta;
+    fl cos_phi_sq_radicand = 1.0f - eta * eta * sin_theta_sq;
+
+    if (n1 > n2 && cos_phi_sq_radicand < 0.0f) {
+        is_tir = true;
+        return 1.0f; // Total internal reflection
+    }
+
+    cos_phi = sqrt(std::max(0.0f, cos_phi_sq_radicand)); // Ensure non-negative
+
+    // Fresnel equations
+    fl r_parallel_num = n2 * cos_theta - n1 * cos_phi;
+    fl r_parallel_den = n2 * cos_theta + n1 * cos_phi;
+    fl r_parallel = (r_parallel_den < 1e-10f) ? 1.0f : r_parallel_num / r_parallel_den;
+
+    fl r_perp_num = n1 * cos_theta - n2 * cos_phi;
+    fl r_perp_den = n1 * cos_theta + n2 * cos_phi;
+    fl r_perp = (r_perp_den < 1e-10f) ? 1.0f : r_perp_num / r_perp_den;
+
+    fl Fr = 0.5f * (r_parallel * r_parallel + r_perp * r_perp);
+    return std::max(0.0f, std::min(1.0f, Fr)); // Clamp Fr to [0, 1]
+}
+
+// Calculates refraction direction wt
+inline void calculate_refraction_direction(
+    fl incident_dx, fl incident_dy, fl incident_dz,
+    fl normal_x, fl normal_y, fl normal_z,
+    fl n1, fl n2, fl cos_theta, fl cos_phi, // cos_theta must be positive
+    fl& refract_dx, fl& refract_dy, fl& refract_dz)
+{
+    fl eta = n1 / n2;
+    fl wt_coeff = eta * cos_theta - cos_phi;
+    refract_dx = eta * incident_dx + wt_coeff * normal_x;
+    refract_dy = eta * incident_dy + wt_coeff * normal_y;
+    refract_dz = eta * incident_dz + wt_coeff * normal_z;
+    // Normalize result (optional but safer)
+    normalize_scalar(refract_dx, refract_dy, refract_dz);
+}
 
 void inline no_shades(const RP8& ray_pack, const Scene& scene, ColorBlock& color_block){
     // ColorBlock layout: flat array of 24 ints (8 rays × 3 RGB channels)
@@ -694,37 +757,7 @@ void inline shade_trad(const RP8& ray_pack,const Scene& scene, ColorBlock& color
 
 
 
-// --- Local SoA Ray Queue (Your "ray_data" struct) ---
-// This will hold the refracted rays *locally* for one 2x4 pixel block.
-struct SoARayQueue {
-    std::vector<fl> o_x, o_y, o_z;
-    std::vector<fl> d_x, d_y, d_z;
-    std::vector<fl> tp_r, tp_g, tp_b;
 
-    void push(fl ox, fl oy, fl oz, fl dx, fl dy, fl dz, fl tr, fl tg, fl tb) {
-        o_x.push_back(ox); o_y.push_back(oy); o_z.push_back(oz);
-        d_x.push_back(dx); d_y.push_back(dy); d_z.push_back(dz);
-        tp_r.push_back(tr); tp_g.push_back(tg); tp_b.push_back(tb);
-    }
-
-    bool pop(fl& ox, fl& oy, fl& oz, fl& dx, fl& dy, fl& dz, fl& tr, fl& tg, fl& tb) {
-        if (is_empty()) return false;
-        ox = o_x.back(); o_x.pop_back();
-        oy = o_y.back(); o_y.pop_back();
-        oz = o_z.back(); o_z.pop_back();
-        dx = d_x.back(); d_x.pop_back();
-        dy = d_y.back(); d_y.pop_back();
-        dz = d_z.back(); d_z.pop_back();
-        tr = tp_r.back(); tp_r.pop_back();
-        tg = tp_g.back(); tp_g.pop_back();
-        tb = tp_b.back(); tp_b.pop_back();
-        return true;
-    }
-
-    bool is_empty() {
-        return o_x.empty();
-    }
-};
 
 // --- Masked Local Shading Functions (NEW) ---
 // These are the new local shaders. They now accept a MASK.
@@ -737,6 +770,7 @@ void inline ambient_masked(const RP8& ray_pack, const Scene& scene, ColorBlockFl
     for(int i = 0; i < 8; ++i) {
         if (active_mask.get(i)) {
             int mat_id = ray_pack.mat_id[i];
+            
             if (mat_id >= 0) {
                 mat_r[i] = scene.materials[mat_id].ambient_reflectance.x;
                 mat_g[i] = scene.materials[mat_id].ambient_reflectance.y;
@@ -744,6 +778,7 @@ void inline ambient_masked(const RP8& ray_pack, const Scene& scene, ColorBlockFl
             }
         }
     }
+    
     
     f_batch material_r = xs::load_aligned(mat_r);
     f_batch material_g = xs::load_aligned(mat_g);
@@ -765,6 +800,8 @@ void inline ambient_masked(const RP8& ray_pack, const Scene& scene, ColorBlockFl
     xs::store_aligned(final_g, color_g);
     xs::store_aligned(final_b, color_b);
     
+    // IMPORTANT: Write to LANE position (i), NOT pixel_index
+    // The caller will handle pixel_index mapping when applying throughput
     for(int i = 0; i < 8; ++i) {
         if (active_mask.get(i)) {
             color_block.rgb[i*3 + 0] += final_r[i];
@@ -823,6 +860,8 @@ void inline diffuse_masked(const RP8& ray_pack, const Scene& scene, ColorBlockFl
     xs::store_aligned(final_g, color_g);
     xs::store_aligned(final_b, color_b);
     
+    // IMPORTANT: Write to LANE position (i), NOT pixel_index
+    // The caller will handle pixel_index mapping when applying throughput
     for(int i = 0; i < 8; ++i) {
         if (active_mask.get(i)) {
             color_block.rgb[i*3 + 0] += final_r[i];
@@ -897,6 +936,8 @@ void inline specular_masked(const RP8& ray_pack, const Scene& scene, ColorBlockF
     xs::store_aligned(final_g, color_g);
     xs::store_aligned(final_b, color_b);
     
+    // IMPORTANT: Write to LANE position (i), NOT pixel_index
+    // The caller will handle pixel_index mapping when applying throughput
     for(int i = 0; i < 8; ++i) {
         if (active_mask.get(i)) {
             color_block.rgb[i*3 + 0] += final_r[i];
@@ -916,7 +957,7 @@ void inline accumulate_color(ColorBlockFl& color_block, const b_batch& mask,
     xs::store_aligned(add_b, b);
 
     for (int i = 0; i < 8; i++) {
-        if (mask.get(i)) {
+        if (mask.get(i)) { // Only accumulate if mask is active
             color_block.rgb[i*3 + 0] += add_r[i];
             color_block.rgb[i*3 + 1] += add_g[i];
             color_block.rgb[i*3 + 2] += add_b[i];
@@ -991,7 +1032,7 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
     // Final pixel colors are accumulated here
     ColorBlockFl final_color_buffer = {};
     
-    // This is the "throughput" (color filter) for each ray
+    // This is the "throughput" (color filter) for each LANE SHOULD BE ADDRESSED BY THE INDEX WHILE BEING MODIFIED UNLESS BUGGGGG
     alignas(32) fl tp_r[8] = {1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f};
     alignas(32) fl tp_g[8] = {1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f};
     alignas(32) fl tp_b[8] = {1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f};
@@ -1011,7 +1052,7 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
     b_batch active_mask = true;
 
     // This is the main "bounce" loop
-    for(int depth = 0; depth <= scene.max_recursion_depth; ++depth) {
+    while(!(xs::none(active_mask)&&refracted_queue.is_empty())) {
         
         // 1. BACK-FILLING (Your design)
         // If some lanes are dead, fill them from the queue
@@ -1030,9 +1071,11 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
                     ray_pack.d_x[i] = refracted_queue.d_x.back(); refracted_queue.d_x.pop_back();
                     ray_pack.d_y[i] = refracted_queue.d_y.back(); refracted_queue.d_y.pop_back();
                     ray_pack.d_z[i] = refracted_queue.d_z.back(); refracted_queue.d_z.pop_back();
-                    tp_r[i] = refracted_queue.tp_r.back(); refracted_queue.tp_r.pop_back();
-                    tp_g[i] = refracted_queue.tp_g.back(); refracted_queue.tp_g.pop_back();
-                    tp_b[i] = refracted_queue.tp_b.back(); refracted_queue.tp_b.pop_back();
+                    ray_pack.depth[i] = refracted_queue.depth.back(); refracted_queue.depth.pop_back();
+                    ray_pack.pixel_index[i] = refracted_queue.pixel_index.back(); refracted_queue.pixel_index.pop_back();
+                    tp_r[ray_pack.pixel_index[i]] = refracted_queue.tp_r.back(); refracted_queue.tp_r.pop_back();
+                    tp_g[ray_pack.pixel_index[i]] = refracted_queue.tp_g.back(); refracted_queue.tp_g.pop_back();
+                    tp_b[ray_pack.pixel_index[i]] = refracted_queue.tp_b.back(); refracted_queue.tp_b.pop_back();
                     // We must re-activate this lane
                     active_fl[i] = 1.0f;
                 }
@@ -1055,21 +1098,20 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
         return_closest_hit_masked(ray_pack, scene, scene.vertex_data__, active_mask);
 
         // 3. SCALAR DISPATCH LOOP (Your design)
-        f_batch throughput_r = xs::load_aligned(tp_r);
-        f_batch throughput_g = xs::load_aligned(tp_g);
-        f_batch throughput_b = xs::load_aligned(tp_b);
-        f_batch current_throughput_r = xs::load_aligned(tp_r); // Load current throughput
+        //PER LANE - Load current throughput before dispatch
+        f_batch current_throughput_r = xs::load_aligned(tp_r);
         f_batch current_throughput_g = xs::load_aligned(tp_g);
         f_batch current_throughput_b = xs::load_aligned(tp_b);
-        f_batch zero_batch = xs::broadcast(0.0f);
 
         // Load all hit data now for SIMD functions
+        //PERRAY
         f_batch ray_dir_x = xs::load(ray_pack.d_x);
         f_batch ray_dir_y = xs::load(ray_pack.d_y);
         f_batch ray_dir_z = xs::load(ray_pack.d_z);
+        
         // *** FIX: Normalize ray directions for view vector calculation ***
         normalize_simd_overwrite(ray_dir_x, ray_dir_y, ray_dir_z);
-        
+        //PERRAY
         f_batch hit_norm_x = xs::load(ray_pack.hit_norm_x);
         f_batch hit_norm_y = xs::load(ray_pack.hit_norm_y);
         f_batch hit_norm_z = xs::load(ray_pack.hit_norm_z);
@@ -1078,13 +1120,16 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
         f_batch hit_pos_z = xs::load(ray_pack.hit_pos_z);
         
         // These masks will track what to do *after* the scalar loop
+        //PERRAY
         b_batch next_active_mask = b_batch(false);
         b_batch local_shade_mask = b_batch(false);
         
         // Use boolean arrays for easier modification
+        //PERRAY
         alignas(32) bool next_active[8] = {false};
         alignas(32) bool local_shade[8] = {false};
-
+        
+        //PERLANE
         alignas(32) fl next_tp_r[8];
         alignas(32) fl next_tp_g[8];
         alignas(32) fl next_tp_b[8];
@@ -1097,12 +1142,12 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
             if (!active_mask.get(i)) continue; // Skip inactive rays
 
             int mat_id = ray_pack.mat_id[i];
-
+            int pixel_index = ray_pack.pixel_index[i];
             if (mat_id < 0) {
                 // --- Ray Missed (Hit Background) ---
-                final_color_buffer.rgb[i*3 + 0] += scene.background_color.x * tp_r[i];
-                final_color_buffer.rgb[i*3 + 1] += scene.background_color.y * tp_g[i];
-                final_color_buffer.rgb[i*3 + 2] += scene.background_color.z * tp_b[i];
+                final_color_buffer.rgb[pixel_index*3 + 0] += scene.background_color.x * tp_r[pixel_index];
+                final_color_buffer.rgb[pixel_index*3 + 1] += scene.background_color.y * tp_g[pixel_index];
+                final_color_buffer.rgb[pixel_index*3 + 2] += scene.background_color.z * tp_b[pixel_index];
                 // Ray is now inactive
             
             } else {
@@ -1111,9 +1156,10 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
                 if (mat.type == "mirror") {
                     // --- Ray Hit Mirror ---
                     // Don't shade. Update throughput, reflect ray, keep active.
-                    next_tp_r[i] = tp_r[i] * mat.mirror_reflectance.x;
-                    next_tp_g[i] = tp_g[i] * mat.mirror_reflectance.y;
-                    next_tp_b[i] = tp_b[i] * mat.mirror_reflectance.z;
+                    if(ray_pack.depth[i]>=scene.max_recursion_depth)continue;
+                    next_tp_r[pixel_index] = tp_r[pixel_index] * mat.mirror_reflectance.x;
+                    next_tp_g[pixel_index] = tp_g[pixel_index] * mat.mirror_reflectance.y;
+                    next_tp_b[pixel_index] = tp_b[pixel_index] * mat.mirror_reflectance.z;
 
                     // Reflect: wr = -wo + 2n(n.wo)
                     fl cos_i = dot_scalar(ray_dir_x.get(i), ray_dir_y.get(i), ray_dir_z.get(i),
@@ -1126,37 +1172,266 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
                     ray_pack.o_x[i] = hit_pos_x.get(i) + hit_norm_x.get(i) * scene.shadow_ray_epsilon;
                     ray_pack.o_y[i] = hit_pos_y.get(i) + hit_norm_y.get(i) * scene.shadow_ray_epsilon;
                     ray_pack.o_z[i] = hit_pos_z.get(i) + hit_norm_z.get(i) * scene.shadow_ray_epsilon;
-
+                    ray_pack.depth[i]++;
                    
                    
                    
 
-                    local_shade[i]= true;
+                   local_shade[i]= true;
                     next_active[i] = true; // Keep this lane active
                     
 
-                } else if (mat.type == "dielectric") {
-                    // // --- Ray Hit Dielectric ---
-                    // // TODO: This is where the complex logic goes.
-                    // // For now, treat as a mirror.
-                    // tp_r[i] *= 0.8f; // Placeholder
-                    // tp_g[i] *= 0.8f;
-                    // tp_b[i] *= 0.8f;
+                } 
+                else if (mat.type == "conductor"){
+                    // --- Ray Hit Conductor ---
+                    // 1. Mark for local shading (uses current tp_r[i])
+                    if(ray_pack.depth[i]>=scene.max_recursion_depth)continue;
+                    local_shade[i] = true;
 
-                    // fl cos_i = dot_scalar(ray_dir_x.get(i), ray_dir_y.get(i), ray_dir_z.get(i),
-                    //                       hit_norm_x.get(i), hit_norm_y.get(i), hit_norm_z.get(i));
-                    
-                    // ray_pack.d_x[i] = ray_dir_x.get(i) - 2.0f * hit_norm_x.get(i) * cos_i;
-                    // ray_pack.d_y[i] = ray_dir_y.get(i) - 2.0f * hit_norm_y.get(i) * cos_i;
-                    // ray_pack.d_z[i] = ray_dir_z.get(i) - 2.0f * hit_norm_z.get(i) * cos_i;
-                    
-                    // ray_pack.o_x[i] = hit_pos_x.get(i) + hit_norm_x.get(i) * scene.shadow_ray_epsilon;
-                    // ray_pack.o_y[i] = hit_pos_y.get(i) + hit_norm_y.get(i) * scene.shadow_ray_epsilon;
-                    // ray_pack.o_z[i] = hit_pos_z.get(i) + hit_norm_z.get(i) * scene.shadow_ray_epsilon;
+                    // 2. Calculate Fresnel Reflectance (Fr)
+                    fl n2 = mat.refraction_index; // n2 from slides
+                    fl k2 = mat.absorption_index; // k2 from slides
+                    // Note: Assuming n1 (air/vacuum) = 1.0, implicitly used in Fresnel equations below
 
-                    // next_active[i] = true; // Keep this lane active
+                    // Calculate cos_theta (angle between normal and wo)
+                    // wo = -ray_dir, so cos_theta = dot(normal, -ray_dir)
+                    // Ensure it's positive (angle between 0 and 90 degrees)
+                    fl cos_theta = -dot_scalar(hit_norm_x.get(i), hit_norm_y.get(i), hit_norm_z.get(i),
+                                               ray_dir_x.get(i), ray_dir_y.get(i), ray_dir_z.get(i));
+                    cos_theta = std::max(0.0f, cos_theta); // Clamp to positive
 
-                } else {
+                    fl n2_sq_k2_sq = n2*n2 + k2*k2;
+                    fl cos_theta_sq = cos_theta * cos_theta;
+                    fl two_n2_cos_theta = 2.0f * n2 * cos_theta;
+
+                    // Rs (Perpendicular polarization reflectance) 
+                    fl rs_num = n2_sq_k2_sq - two_n2_cos_theta + cos_theta_sq;
+                    fl rs_den = n2_sq_k2_sq + two_n2_cos_theta + cos_theta_sq;
+                    fl Rs = (rs_den == 0.0f) ? 1.0f : rs_num / rs_den; // Avoid division by zero
+
+                    // Rp (Parallel polarization reflectance) [cite: 246]
+                    fl rp_num = n2_sq_k2_sq * cos_theta_sq - two_n2_cos_theta + 1.0f;
+                    fl rp_den = n2_sq_k2_sq * cos_theta_sq + two_n2_cos_theta + 1.0f;
+                    fl Rp = (rp_den == 0.0f) ? 1.0f : rp_num / rp_den; // Avoid division by zero
+
+                    // Fresnel Reflectance Fr [cite: 237]
+                    fl Fr = 0.5f * (Rs + Rp);
+                    Fr = std::max(0.0f, std::min(1.0f, Fr)); // Clamp Fr to [0, 1]
+
+                    // 3. Calculate and store NEXT throughput
+                    // Throughput = current_tp * Fr * km 
+                    next_tp_r[pixel_index] = tp_r[pixel_index] * Fr * mat.mirror_reflectance.x;
+                    next_tp_g[pixel_index] = tp_g[pixel_index] * Fr * mat.mirror_reflectance.y;
+                    next_tp_b[pixel_index] = tp_b[pixel_index] * Fr * mat.mirror_reflectance.z;
+
+                    // 4. Reflect ray in place for next bounce (same as mirror)
+                    // wr = d - 2n(n.d)
+                    fl n_dot_d = dot_scalar(hit_norm_x.get(i), hit_norm_y.get(i), hit_norm_z.get(i),
+                                            ray_dir_x.get(i), ray_dir_y.get(i), ray_dir_z.get(i));
+                    ray_pack.d_x[i] = ray_dir_x.get(i) - 2.0f * hit_norm_x.get(i) * n_dot_d;
+                    ray_pack.d_y[i] = ray_dir_y.get(i) - 2.0f * hit_norm_y.get(i) * n_dot_d;
+                    ray_pack.d_z[i] = ray_dir_z.get(i) - 2.0f * hit_norm_z.get(i) * n_dot_d;
+
+                    ray_pack.o_x[i] = hit_pos_x.get(i) + hit_norm_x.get(i) * scene.shadow_ray_epsilon;
+                    ray_pack.o_y[i] = hit_pos_y.get(i) + hit_norm_y.get(i) * scene.shadow_ray_epsilon;
+                    ray_pack.o_z[i] = hit_pos_z.get(i) + hit_norm_z.get(i) * scene.shadow_ray_epsilon;
+                    ray_pack.depth[i]++;
+
+                    // 5. Mark ray as active for next bounce
+                    next_active[i] = true;
+                }
+                else if (mat.type == "dielectric") {
+                    // --- Ray Hit Dielectric ---
+                    // Check max depth first
+                    if (ray_pack.depth[i] >= scene.max_recursion_depth) {
+                        
+                        // next_active remains false
+                        continue; // Terminate ray
+                    }
+
+                    // Get incident direction and normal
+                    fl incident_dx = ray_dir_x.get(i);
+                    fl incident_dy = ray_dir_y.get(i);
+                    fl incident_dz = ray_dir_z.get(i);
+                    fl hit_normal_x = hit_norm_x.get(i);
+                    fl hit_normal_y = hit_norm_y.get(i);
+                    fl hit_normal_z = hit_norm_z.get(i);
+
+                    // Determine state: entering or exiting
+                    fl n_dot_d = dot_scalar(hit_normal_x, hit_normal_y, hit_normal_z,
+                                            incident_dx, incident_dy, incident_dz);
+                    bool entering = (n_dot_d < 0.0f);
+                    fl n1, n2;         // Refractive indices
+                    fl use_normal_x, use_normal_y, use_normal_z;  // Normal adjusted for entry/exit
+
+                    if (entering) {
+                        n1 = 1.0f; // Assuming outside is air/vacuum
+                        n2 = mat.refraction_index; // Material's index
+                        use_normal_x = hit_normal_x;
+                        use_normal_y = hit_normal_y;
+                        use_normal_z = hit_normal_z;
+                    } else { // Exiting
+                        n1 = mat.refraction_index; // Material's index
+                        n2 = 1.0f; // Assuming outside is air/vacuum
+                        use_normal_x = -hit_normal_x; // Flip normal for calculations
+                        use_normal_y = -hit_normal_y;
+                        use_normal_z = -hit_normal_z;
+                    }
+
+                    // Calculate positive angle cos_theta for Fresnel/Snell
+                    fl cos_theta = dot_scalar(use_normal_x, use_normal_y, use_normal_z,
+                                              -incident_dx, -incident_dy, -incident_dz);
+                    cos_theta = std::max(0.0f, cos_theta); // Clamp potential precision errors
+
+                    // Calculate Fresnel Reflectance (Fr) and check for TIR
+                    bool is_tir = false;
+                    fl cos_phi = 0.0f;
+                    fl Fr = calculate_dielectric_fresnel(cos_theta, n1, n2, is_tir, cos_phi); // Helper function assumed correct
+                    fl Ft = 1.0f - Fr; // Transmission ratio
+
+                    // --- Action based on Entering/Exiting/TIR ---
+
+                    if (entering) {
+                        // ** Entering: Local Shade + Reflect (in packet) + Refract (to queue) **
+                        local_shade[i] = true; // Apply local shading
+
+                        // 1. Handle Reflection Path (updates packet in place)
+                        fl reflect_dx, reflect_dy, reflect_dz;
+                        calculate_reflection_direction(incident_dx, incident_dy, incident_dz,
+                                                       use_normal_x, use_normal_y, use_normal_z,
+                                                       reflect_dx, reflect_dy, reflect_dz); // Helper function assumed correct
+                        ray_pack.d_x[i] = reflect_dx;
+                        ray_pack.d_y[i] = reflect_dy;
+                        ray_pack.d_z[i] = reflect_dz;
+                        ray_pack.o_x[i] = hit_pos_x.get(i) + use_normal_x * scene.shadow_ray_epsilon; // Offset origin
+                        ray_pack.o_y[i] = hit_pos_y.get(i) + use_normal_y * scene.shadow_ray_epsilon;
+                        ray_pack.o_z[i] = hit_pos_z.get(i) + use_normal_z * scene.shadow_ray_epsilon;
+                        ray_pack.depth[i]++; // Increment depth for reflected ray
+
+                        // Update NEXT throughput for reflection path (Fr only, no mirror reflectance)
+                        next_tp_r[pixel_index] = tp_r[pixel_index] * Fr;
+                        next_tp_g[pixel_index] = tp_g[pixel_index] * Fr;
+                        next_tp_b[pixel_index] = tp_b[pixel_index] * Fr;
+
+                        next_active[i] = true; // Reflection path continues
+
+                        // 2. Handle Refraction Path (push to queue)
+                        // TIR cannot happen on entry from air/vacuum (n1 < n2)
+                        //if (Ft > 1e-10f) { // Only refract if significant energy transmitted
+                            fl refract_dx, refract_dy, refract_dz;
+                            calculate_refraction_direction(incident_dx, incident_dy, incident_dz,
+                                                           use_normal_x, use_normal_y, use_normal_z,
+                                                           n1, n2, cos_theta, cos_phi,
+                                                           refract_dx, refract_dy, refract_dz); // Helper function assumed correct
+
+                            // Offset origin *against* normal to go inside
+                            fl refract_ox = hit_pos_x.get(i) - use_normal_x * scene.shadow_ray_epsilon;
+                            fl refract_oy = hit_pos_y.get(i) - use_normal_y * scene.shadow_ray_epsilon;
+                            fl refract_oz = hit_pos_z.get(i) - use_normal_z * scene.shadow_ray_epsilon;
+
+                            // Throughput for refracted path (Ft * current_tp)
+                            fl refract_tr = tp_r[pixel_index] * Ft;
+                            fl refract_tg = tp_g[pixel_index] * Ft;
+                            fl refract_tb = tp_b[pixel_index] * Ft;
+                            // Attenuation will be applied when this ray exits
+                            
+                            // Push with incremented depth
+                            refracted_queue.push(refract_ox, refract_oy, refract_oz,
+                                                 refract_dx, refract_dy, refract_dz,
+                                                 refract_tr, refract_tg, refract_tb,
+                                                 ray_pack.depth[i] + 1, ray_pack.pixel_index[i]); // Depth increases for queued ray
+                        //}
+
+                    } else { // ** Exiting **
+                        // ** Exiting: NO Local Shade + Check TIR + (Refract AND Reflect Internally) OR (TIR Reflect) **
+                        local_shade[i] = false; // <<< NO LOCAL SHADE ON EXIT (as per instruction)
+
+                        if (is_tir) {
+                            // ** TIR: Reflect internally only (updates packet in place) **
+                            fl reflect_dx, reflect_dy, reflect_dz;
+                            calculate_reflection_direction(incident_dx, incident_dy, incident_dz,
+                                                           use_normal_x, use_normal_y, use_normal_z, // use_normal points "in"
+                                                           reflect_dx, reflect_dy, reflect_dz);
+                            ray_pack.d_x[i] = reflect_dx;
+                            ray_pack.d_y[i] = reflect_dy;
+                            ray_pack.d_z[i] = reflect_dz;
+                            // Offset origin along use_normal (points back into medium)
+                            ray_pack.o_x[i] = hit_pos_x.get(i) + use_normal_x * scene.shadow_ray_epsilon;
+                            ray_pack.o_y[i] = hit_pos_y.get(i) + use_normal_y * scene.shadow_ray_epsilon;
+                            ray_pack.o_z[i] = hit_pos_z.get(i) + use_normal_z * scene.shadow_ray_epsilon;
+                            ray_pack.depth[i]++;
+
+                            // Update NEXT throughput for reflection path (Fr=1.0, no mirror reflectance)
+                            next_tp_r[pixel_index] = tp_r[pixel_index]; // Fr is 1.0 here, no additional attenuation
+                            next_tp_g[pixel_index] = tp_g[pixel_index];
+                            next_tp_b[pixel_index] = tp_b[pixel_index];
+
+                            next_active[i] = true; // Reflection continues in packet (use lane index, not pixel_index)
+
+                        } else { // ** No TIR: Refract (in packet) AND Reflect internally (to queue) **
+
+                            // --- 1. Handle Internal Reflection (Push to Queue) ---
+                            if (Fr > 1e-10f) { // Check if reflection is significant
+                                fl reflect_dx, reflect_dy, reflect_dz;
+                                calculate_reflection_direction(incident_dx, incident_dy, incident_dz,
+                                                               use_normal_x, use_normal_y, use_normal_z, // use_normal points "in"
+                                                               reflect_dx, reflect_dy, reflect_dz);
+
+                                // Origin offset along use_normal (points back into medium)
+                                fl reflect_ox = hit_pos_x.get(i) + use_normal_x * scene.shadow_ray_epsilon;
+                                fl reflect_oy = hit_pos_y.get(i) + use_normal_y * scene.shadow_ray_epsilon;
+                                fl reflect_oz = hit_pos_z.get(i) + use_normal_z * scene.shadow_ray_epsilon;
+
+                                // Throughput for internal reflection path (Fr only, no mirror reflectance)
+                                fl reflect_tr = tp_r[pixel_index] * Fr;
+                                fl reflect_tg = tp_g[pixel_index] * Fr;
+                                fl reflect_tb = tp_b[pixel_index] * Fr;
+
+                                // Push internal reflection ray to queue with incremented depth
+                                refracted_queue.push(reflect_ox, reflect_oy, reflect_oz,
+                                                     reflect_dx, reflect_dy, reflect_dz,
+                                                     reflect_tr, reflect_tg, reflect_tb,
+                                                     ray_pack.depth[i] + 1, ray_pack.pixel_index[i]); // Depth increases for queued ray
+                            }
+
+                            // --- 2. Handle Refraction (Updates packet in place) ---
+                            //if (Ft > 1e-10f) { // Check if transmission is significant
+                                fl refract_dx, refract_dy, refract_dz;
+                                calculate_refraction_direction(incident_dx, incident_dy, incident_dz,
+                                                               use_normal_x, use_normal_y, use_normal_z, // use_normal points "in"
+                                                               n1, n2, cos_theta, cos_phi,
+                                                               refract_dx, refract_dy, refract_dz);
+
+                                // Update ray packet IN PLACE with refracted ray
+                                ray_pack.d_x[i] = refract_dx;
+                                ray_pack.d_y[i] = refract_dy;
+                                ray_pack.d_z[i] = refract_dz;
+                                // Offset against effective normal (use_normal points into medium, offset "out")
+                                ray_pack.o_x[i] = hit_pos_x.get(i) - use_normal_x * scene.shadow_ray_epsilon;
+                                ray_pack.o_y[i] = hit_pos_y.get(i) - use_normal_y * scene.shadow_ray_epsilon;
+                                ray_pack.o_z[i] = hit_pos_z.get(i) - use_normal_z * scene.shadow_ray_epsilon;
+                                ray_pack.depth[i]++; // Increment depth for refracted ray
+
+                                // Update NEXT throughput for refraction path (Ft * current_tp)
+                                next_tp_r[pixel_index] = tp_r[pixel_index] * Ft;
+                                next_tp_g[pixel_index] = tp_g[pixel_index] * Ft;
+                                next_tp_b[pixel_index] = tp_b[pixel_index] * Ft;
+
+                                // Apply Attenuation using Beer's Law (e^-cx)
+                                fl distance_inside = ray_pack.t_min[i]; // t_min from tracing *inside*
+                                Vec3f C = mat.absorption_coefficient; // c from Beer's Law
+                                if(distance_inside > 1e-16f && (C.x > 1e-6f || C.y > 1e-6f || C.z > 1e-6f)) {
+                                    next_tp_r[pixel_index] *= exp(-C.x * distance_inside); // Apply attenuation
+                                    next_tp_g[pixel_index] *= exp(-C.y * distance_inside);
+                                    next_tp_b[pixel_index] *= exp(-C.z * distance_inside);
+                                }
+
+                                next_active[i] = true; // Refraction path continues in packet
+                            } 
+                        //}
+                    } // End Entering/Exiting logic
+                } // End Dielectric block // End Dielectric block
+                else {
                     // --- Ray Hit Diffuse/Default ---
                     // Mark for local shading. Ray will become inactive.
                     local_shade[i] = true;
@@ -1178,20 +1453,16 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
                                ray_dir_x, ray_dir_y, ray_dir_z);
             
             // Accumulate the final, throughput-modulated color
-            alignas(32) fl local_r[8], local_g[8], local_b[8];
+            // local_color_buffer is indexed by LANE (i), we need to write to PIXEL position
             for(int i=0; i<8; i++) {
-                local_r[i] = local_color_buffer.rgb[i*3+0] * tp_r[i];
-                local_g[i] = local_color_buffer.rgb[i*3+1] * tp_g[i];
-                local_b[i] = local_color_buffer.rgb[i*3+2] * tp_b[i];
-
-                
-
+                if (local_shade_mask.get(i)) {
+                    int pixel_index = ray_pack.pixel_index[i]; // Get pixel this lane belongs to
+                    // Apply throughput (indexed by pixel) to shading (indexed by lane)
+                    final_color_buffer.rgb[pixel_index*3 + 0] += local_color_buffer.rgb[i*3+0] * tp_r[pixel_index];
+                    final_color_buffer.rgb[pixel_index*3 + 1] += local_color_buffer.rgb[i*3+1] * tp_g[pixel_index];
+                    final_color_buffer.rgb[pixel_index*3 + 2] += local_color_buffer.rgb[i*3+2] * tp_b[pixel_index];
+                }
             }
-            
-            accumulate_color(final_color_buffer, local_shade_mask,
-                             xs::load_aligned(local_r),
-                             xs::load_aligned(local_g),
-                             xs::load_aligned(local_b));
         }
 
         // 5. PREPARE FOR NEXT LOOP

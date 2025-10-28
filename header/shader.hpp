@@ -1032,7 +1032,7 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
     // Final pixel colors are accumulated here
     ColorBlockFl final_color_buffer = {};
     
-    // This is the "throughput" (color filter) for each LANE SHOULD BE ADDRESSED BY THE INDEX WHILE BEING MODIFIED UNLESS BUGGGGG
+    // This is the "throughput" (color filter) for each LANE SHOULD BE ADDRESSED BY THE LANE INDEX i WHILE BEING MODIFIED UNLESS BUGGGGG
     alignas(32) fl tp_r[8] = {1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f};
     alignas(32) fl tp_g[8] = {1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f};
     alignas(32) fl tp_b[8] = {1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f};
@@ -1073,9 +1073,12 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
                     ray_pack.d_z[i] = refracted_queue.d_z.back(); refracted_queue.d_z.pop_back();
                     ray_pack.depth[i] = refracted_queue.depth.back(); refracted_queue.depth.pop_back();
                     ray_pack.pixel_index[i] = refracted_queue.pixel_index.back(); refracted_queue.pixel_index.pop_back();
-                    tp_r[ray_pack.pixel_index[i]] = refracted_queue.tp_r.back(); refracted_queue.tp_r.pop_back();
-                    tp_g[ray_pack.pixel_index[i]] = refracted_queue.tp_g.back(); refracted_queue.tp_g.pop_back();
-                    tp_b[ray_pack.pixel_index[i]] = refracted_queue.tp_b.back(); refracted_queue.tp_b.pop_back();
+                    
+                    //THESE LINES ARE PROBLEMATIC CREATES RACE CONDITIONS BETWEEN CURRENTLY SENT MIRROR RAYS AND REFRACTED RAYS.
+                    //PROPOSED SOLUTION
+                    tp_r[i] = refracted_queue.tp_r.back(); refracted_queue.tp_r.pop_back();
+                    tp_g[i] = refracted_queue.tp_g.back(); refracted_queue.tp_g.pop_back();
+                    tp_b[i] = refracted_queue.tp_b.back(); refracted_queue.tp_b.pop_back();
                     // We must re-activate this lane
                     active_fl[i] = 1.0f;
                 }
@@ -1145,9 +1148,9 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
             int pixel_index = ray_pack.pixel_index[i];
             if (mat_id < 0) {
                 // --- Ray Missed (Hit Background) ---
-                final_color_buffer.rgb[pixel_index*3 + 0] += scene.background_color.x * tp_r[pixel_index];
-                final_color_buffer.rgb[pixel_index*3 + 1] += scene.background_color.y * tp_g[pixel_index];
-                final_color_buffer.rgb[pixel_index*3 + 2] += scene.background_color.z * tp_b[pixel_index];
+                final_color_buffer.rgb[pixel_index*3 + 0] += scene.background_color.x * tp_r[i];
+                final_color_buffer.rgb[pixel_index*3 + 1] += scene.background_color.y * tp_g[i];
+                final_color_buffer.rgb[pixel_index*3 + 2] += scene.background_color.z * tp_b[i];
                 // Ray is now inactive
             
             } else {
@@ -1157,9 +1160,9 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
                     // --- Ray Hit Mirror ---
                     // Don't shade. Update throughput, reflect ray, keep active.
                     if(ray_pack.depth[i]>=scene.max_recursion_depth)continue;
-                    next_tp_r[pixel_index] = tp_r[pixel_index] * mat.mirror_reflectance.x;
-                    next_tp_g[pixel_index] = tp_g[pixel_index] * mat.mirror_reflectance.y;
-                    next_tp_b[pixel_index] = tp_b[pixel_index] * mat.mirror_reflectance.z;
+                    next_tp_r[i] = tp_r[i] * mat.mirror_reflectance.x;
+                    next_tp_g[i] = tp_g[i] * mat.mirror_reflectance.y;
+                    next_tp_b[i] = tp_b[i] * mat.mirror_reflectance.z;
 
                     // Reflect: wr = -wo + 2n(n.wo)
                     fl cos_i = dot_scalar(ray_dir_x.get(i), ray_dir_y.get(i), ray_dir_z.get(i),
@@ -1174,10 +1177,8 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
                     ray_pack.o_z[i] = hit_pos_z.get(i) + hit_norm_z.get(i) * scene.shadow_ray_epsilon;
                     ray_pack.depth[i]++;
                    
-                   
-                   
-
-                   local_shade[i]= true;
+                    
+                    local_shade[i] = true; 
                     next_active[i] = true; // Keep this lane active
                     
 
@@ -1191,7 +1192,7 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
                     // 2. Calculate Fresnel Reflectance (Fr)
                     fl n2 = mat.refraction_index; // n2 from slides
                     fl k2 = mat.absorption_index; // k2 from slides
-                    // Note: Assuming n1 (air/vacuum) = 1.0, implicitly used in Fresnel equations below
+                    // Note: n1 (air/vacuum) = 1.0f is implicitly assumed in the Fresnel equations
 
                     // Calculate cos_theta (angle between normal and wo)
                     // wo = -ray_dir, so cos_theta = dot(normal, -ray_dir)
@@ -1220,9 +1221,9 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
 
                     // 3. Calculate and store NEXT throughput
                     // Throughput = current_tp * Fr * km 
-                    next_tp_r[pixel_index] = tp_r[pixel_index] * Fr * mat.mirror_reflectance.x;
-                    next_tp_g[pixel_index] = tp_g[pixel_index] * Fr * mat.mirror_reflectance.y;
-                    next_tp_b[pixel_index] = tp_b[pixel_index] * Fr * mat.mirror_reflectance.z;
+                    next_tp_r[i] = tp_r[i] * Fr * mat.mirror_reflectance.x;
+                    next_tp_g[i] = tp_g[i] * Fr * mat.mirror_reflectance.y;
+                    next_tp_b[i] = tp_b[i] * Fr * mat.mirror_reflectance.z;
 
                     // 4. Reflect ray in place for next bounce (same as mirror)
                     // wr = d - 2n(n.d)
@@ -1292,10 +1293,10 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
                     // --- Action based on Entering/Exiting/TIR ---
 
                     if (entering) {
-                        // ** Entering: Local Shade + Reflect (in packet) + Refract (to queue) **
+                        //** Entering: Local Shade + Reflect (in packet) + Refract (to queue) **
                         local_shade[i] = true; // Apply local shading
 
-                        // 1. Handle Reflection Path (updates packet in place)
+                        //1. Handle Reflection Path (updates packet in place)
                         fl reflect_dx, reflect_dy, reflect_dz;
                         calculate_reflection_direction(incident_dx, incident_dy, incident_dz,
                                                        use_normal_x, use_normal_y, use_normal_z,
@@ -1309,15 +1310,15 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
                         ray_pack.depth[i]++; // Increment depth for reflected ray
 
                         // Update NEXT throughput for reflection path (Fr only, no mirror reflectance)
-                        next_tp_r[pixel_index] = tp_r[pixel_index] * Fr;
-                        next_tp_g[pixel_index] = tp_g[pixel_index] * Fr;
-                        next_tp_b[pixel_index] = tp_b[pixel_index] * Fr;
+                        next_tp_r[i] = tp_r[i] * Fr;
+                        next_tp_g[i] = tp_g[i] * Fr;
+                        next_tp_b[i] = tp_b[i] * Fr;
 
                         next_active[i] = true; // Reflection path continues
 
                         // 2. Handle Refraction Path (push to queue)
                         // TIR cannot happen on entry from air/vacuum (n1 < n2)
-                        //if (Ft > 1e-10f) { // Only refract if significant energy transmitted
+                        if (Ft > 1e-10f) { // Only refract if significant energy transmitted
                             fl refract_dx, refract_dy, refract_dz;
                             calculate_refraction_direction(incident_dx, incident_dy, incident_dz,
                                                            use_normal_x, use_normal_y, use_normal_z,
@@ -1330,24 +1331,24 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
                             fl refract_oz = hit_pos_z.get(i) - use_normal_z * scene.shadow_ray_epsilon;
 
                             // Throughput for refracted path (Ft * current_tp)
-                            fl refract_tr = tp_r[pixel_index] * Ft;
-                            fl refract_tg = tp_g[pixel_index] * Ft;
-                            fl refract_tb = tp_b[pixel_index] * Ft;
+                            fl refract_tr = tp_r[i] * Ft;
+                            fl refract_tg = tp_g[i] * Ft;
+                            fl refract_tb = tp_b[i] * Ft;
                             // Attenuation will be applied when this ray exits
                             
                             // Push with incremented depth
                             refracted_queue.push(refract_ox, refract_oy, refract_oz,
                                                  refract_dx, refract_dy, refract_dz,
                                                  refract_tr, refract_tg, refract_tb,
-                                                 ray_pack.depth[i] + 1, ray_pack.pixel_index[i]); // Depth increases for queued ray
-                        //}
+                                                 ray_pack.depth[i], ray_pack.pixel_index[i]); // Depth increases for queued ray
+                        }
 
                     } else { // ** Exiting **
                         // ** Exiting: NO Local Shade + Check TIR + (Refract AND Reflect Internally) OR (TIR Reflect) **
                         local_shade[i] = false; // <<< NO LOCAL SHADE ON EXIT (as per instruction)
-
+                        
                         if (is_tir) {
-                            // ** TIR: Reflect internally only (updates packet in place) **
+                            //** TIR: Reflect internally only (updates packet in place) **
                             fl reflect_dx, reflect_dy, reflect_dz;
                             calculate_reflection_direction(incident_dx, incident_dy, incident_dz,
                                                            use_normal_x, use_normal_y, use_normal_z, // use_normal points "in"
@@ -1362,15 +1363,15 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
                             ray_pack.depth[i]++;
 
                             // Update NEXT throughput for reflection path (Fr=1.0, no mirror reflectance)
-                            next_tp_r[pixel_index] = tp_r[pixel_index]; // Fr is 1.0 here, no additional attenuation
-                            next_tp_g[pixel_index] = tp_g[pixel_index];
-                            next_tp_b[pixel_index] = tp_b[pixel_index];
+                            next_tp_r[i] = tp_r[i]; // Fr is 1.0 here, no additional attenuation
+                            next_tp_g[i] = tp_g[i];
+                            next_tp_b[i] = tp_b[i];
 
                             next_active[i] = true; // Reflection continues in packet (use lane index, not pixel_index)
 
                         } else { // ** No TIR: Refract (in packet) AND Reflect internally (to queue) **
 
-                            // --- 1. Handle Internal Reflection (Push to Queue) ---
+                            //--- 1. Handle Internal Reflection (Push to Queue) ---
                             if (Fr > 1e-10f) { // Check if reflection is significant
                                 fl reflect_dx, reflect_dy, reflect_dz;
                                 calculate_reflection_direction(incident_dx, incident_dy, incident_dz,
@@ -1394,8 +1395,8 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
                                                      ray_pack.depth[i] + 1, ray_pack.pixel_index[i]); // Depth increases for queued ray
                             }
 
-                            // --- 2. Handle Refraction (Updates packet in place) ---
-                            //if (Ft > 1e-10f) { // Check if transmission is significant
+                            //--- 2. Handle Refraction (Updates packet in place) ---
+                            if (Ft > 1e-10f) { // Check if transmission is significant
                                 fl refract_dx, refract_dy, refract_dz;
                                 calculate_refraction_direction(incident_dx, incident_dy, incident_dz,
                                                                use_normal_x, use_normal_y, use_normal_z, // use_normal points "in"
@@ -1413,28 +1414,31 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
                                 ray_pack.depth[i]++; // Increment depth for refracted ray
 
                                 // Update NEXT throughput for refraction path (Ft * current_tp)
-                                next_tp_r[pixel_index] = tp_r[pixel_index] * Ft;
-                                next_tp_g[pixel_index] = tp_g[pixel_index] * Ft;
-                                next_tp_b[pixel_index] = tp_b[pixel_index] * Ft;
+                                next_tp_r[i] = tp_r[i] * Ft;
+                                next_tp_g[i] = tp_g[i] * Ft;
+                                next_tp_b[i] = tp_b[i] * Ft;
 
                                 // Apply Attenuation using Beer's Law (e^-cx)
                                 fl distance_inside = ray_pack.t_min[i]; // t_min from tracing *inside*
                                 Vec3f C = mat.absorption_coefficient; // c from Beer's Law
                                 if(distance_inside > 1e-16f && (C.x > 1e-6f || C.y > 1e-6f || C.z > 1e-6f)) {
-                                    next_tp_r[pixel_index] *= exp(-C.x * distance_inside); // Apply attenuation
-                                    next_tp_g[pixel_index] *= exp(-C.y * distance_inside);
-                                    next_tp_b[pixel_index] *= exp(-C.z * distance_inside);
+                                    next_tp_r[i] *= exp(-C.x * distance_inside); // Apply attenuation
+                                    next_tp_g[i] *= exp(-C.y * distance_inside);
+                                    next_tp_b[i] *= exp(-C.z * distance_inside);
                                 }
 
                                 next_active[i] = true; // Refraction path continues in packet
                             } 
-                        //}
+                        }
                     } // End Entering/Exiting logic
                 } // End Dielectric block // End Dielectric block
                 else {
                     // --- Ray Hit Diffuse/Default ---
                     // Mark for local shading. Ray will become inactive.
                     local_shade[i] = true;
+                    
+
+                    
                 }
             }
         } // End scalar dispatch loop
@@ -1458,9 +1462,9 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
                 if (local_shade_mask.get(i)) {
                     int pixel_index = ray_pack.pixel_index[i]; // Get pixel this lane belongs to
                     // Apply throughput (indexed by pixel) to shading (indexed by lane)
-                    final_color_buffer.rgb[pixel_index*3 + 0] += local_color_buffer.rgb[i*3+0] * tp_r[pixel_index];
-                    final_color_buffer.rgb[pixel_index*3 + 1] += local_color_buffer.rgb[i*3+1] * tp_g[pixel_index];
-                    final_color_buffer.rgb[pixel_index*3 + 2] += local_color_buffer.rgb[i*3+2] * tp_b[pixel_index];
+                    final_color_buffer.rgb[pixel_index*3 + 0] += local_color_buffer.rgb[i*3+0] * tp_r[i];
+                    final_color_buffer.rgb[pixel_index*3 + 1] += local_color_buffer.rgb[i*3+1] * tp_g[i];
+                    final_color_buffer.rgb[pixel_index*3 + 2] += local_color_buffer.rgb[i*3+2] * tp_b[i];
                 }
             }
         }

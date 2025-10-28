@@ -10,6 +10,10 @@
 #include "stb_image.h"
 #include "stb_image_write.h"
 
+
+
+
+
 int main(int argc, char* argv[]) {
     Scene scene;
     // PARSE SCENE POPULATE STRUCTS
@@ -91,11 +95,11 @@ int main(int argc, char* argv[]) {
                                 
                         return_closest_hit(ray_package,scene,scene.vertex_data__);
                         
-                        shade_recursive(ray_package,scene,cb);
+                        shade(ray_package,scene,cb);
                         
                         
                        
-                        
+                        //implement write caching here(after bvh implementation) 
                         //shade_trad(ray_package,scene,cb);
                         memcpy(&image.data()[current_mem_ptr],cb.rgb,12*sizeof(unsigned char));
                         current_mem_ptr += cam.image_resolution.x*3;
@@ -123,8 +127,6 @@ int main(int argc, char* argv[]) {
 
  
 
-    //OUTPUT IMAGE
-    
 
 
     return 0;

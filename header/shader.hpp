@@ -1027,7 +1027,7 @@ void inline shade_local_masked(RP8& ray_pack, const Scene& scene, const b_batch&
 
 
 // --- THE NEW RECURSIVE SHADER ---
-void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color_block){
+void inline shade_iterative(RP8& ray_pack, const Scene& scene, ColorBlock& color_block){
     
     // Final pixel colors are accumulated here
     ColorBlockFl final_color_buffer = {};
@@ -1482,11 +1482,11 @@ void inline shade_recursive(RP8& ray_pack, const Scene& scene, ColorBlock& color
 }
 
 // --- LEGACY SHADE FUNCTION (for compatibility) ---
-// We keep this, but the new code should call shade_recursive
+// We keep this, but the new code should call shade_iterative
 void inline shade(const RP8& ray_pack,const Scene& scene, ColorBlock& color_block){
     
     // This function is now just a wrapper for the new recursive shader
     // We need a mutable copy of the ray_pack to pass to the recursive function
     RP8 mutable_ray_pack = ray_pack;
-    shade_recursive(mutable_ray_pack, scene, color_block);
+    shade_iterative(mutable_ray_pack, scene, color_block);
 }

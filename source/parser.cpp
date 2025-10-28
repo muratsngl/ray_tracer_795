@@ -287,6 +287,10 @@ public:
                     int mesh_id = std::stoi(obj.at("_id").get<std::string>());
                     int material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
                     
+                    if (obj.contains("_shadingMode") && obj.at("_shadingMode").get<std::string>() == "smooth") {
+                        G_SMOOTH_SHADING_ENABLED = true;
+                    }
+                    
                     const auto& facesData = obj.at("Faces");
                     
                     // --- NEW LOGIC: Handle _plyFile ---

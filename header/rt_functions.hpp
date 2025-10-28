@@ -226,6 +226,17 @@ void inline intersect_triangles(
     Vec3f b = { vertices.v_pos_x[i1], vertices.v_pos_y[i1], vertices.v_pos_z[i1] };
     Vec3f c = { vertices.v_pos_x[i2], vertices.v_pos_y[i2], vertices.v_pos_z[i2] };
 
+    // Get vertex normals
+    auto v0_norm_x = xs::broadcast(vertices.v_nor_x[i0]);
+    auto v0_norm_y = xs::broadcast(vertices.v_nor_y[i0]);
+    auto v0_norm_z = xs::broadcast(vertices.v_nor_z[i0]);
+    auto v1_norm_x = xs::broadcast(vertices.v_nor_x[i1]);
+    auto v1_norm_y = xs::broadcast(vertices.v_nor_y[i1]);
+    auto v1_norm_z = xs::broadcast(vertices.v_nor_z[i1]);
+    auto v2_norm_x = xs::broadcast(vertices.v_nor_x[i2]);
+    auto v2_norm_y = xs::broadcast(vertices.v_nor_y[i2]);
+    auto v2_norm_z = xs::broadcast(vertices.v_nor_z[i2]);
+
     // Calculate edges
     Vec3f e1_scalar = b - a;
     Vec3f e2_scalar = c - a;
@@ -312,14 +323,17 @@ void inline intersect_triangles(
     }
 
     // --- Update Hit Information ---
-    // Use flat triangle normal (no interpolation)
-    
-    // 1. Get the precomputed triangle normal
-    auto new_norm_x = tri_norm_x;
-    auto new_norm_y = tri_norm_y;
-    auto new_norm_z = tri_norm_z;
-    
-    // 2. Conditionally store the triangle normal
+    // Compute the normal (smooth or flat)
+    auto w = one_batch - u - v;
+    auto interp_norm_x = w * v0_norm_x + u * v1_norm_x + v * v2_norm_x;
+    auto interp_norm_y = w * v0_norm_y + u * v1_norm_y + v * v2_norm_y;
+    auto interp_norm_z = w * v0_norm_z + u * v1_norm_z + v * v2_norm_z;
+
+    auto new_norm_x = G_SMOOTH_SHADING_ENABLED ? interp_norm_x : tri_norm_x;
+    auto new_norm_y = G_SMOOTH_SHADING_ENABLED ? interp_norm_y : tri_norm_y;
+    auto new_norm_z = G_SMOOTH_SHADING_ENABLED ? interp_norm_z : tri_norm_z;
+
+    // 2. Conditionally store the normal
     norm_x_out = xs::select(final_hit_mask, new_norm_x, norm_x_out);
     norm_y_out = xs::select(final_hit_mask, new_norm_y, norm_y_out);
     norm_z_out = xs::select(final_hit_mask, new_norm_z, norm_z_out);
@@ -835,6 +849,17 @@ void inline intersect_triangles_masked(
     Vec3f b = { vertices.v_pos_x[i1], vertices.v_pos_y[i1], vertices.v_pos_z[i1] };
     Vec3f c = { vertices.v_pos_x[i2], vertices.v_pos_y[i2], vertices.v_pos_z[i2] };
 
+    // Get vertex normals
+    auto v0_norm_x = xs::broadcast(vertices.v_nor_x[i0]);
+    auto v0_norm_y = xs::broadcast(vertices.v_nor_y[i0]);
+    auto v0_norm_z = xs::broadcast(vertices.v_nor_z[i0]);
+    auto v1_norm_x = xs::broadcast(vertices.v_nor_x[i1]);
+    auto v1_norm_y = xs::broadcast(vertices.v_nor_y[i1]);
+    auto v1_norm_z = xs::broadcast(vertices.v_nor_z[i1]);
+    auto v2_norm_x = xs::broadcast(vertices.v_nor_x[i2]);
+    auto v2_norm_y = xs::broadcast(vertices.v_nor_y[i2]);
+    auto v2_norm_z = xs::broadcast(vertices.v_nor_z[i2]);
+
     // Calculate edges
     Vec3f e1_scalar = b - a;
     Vec3f e2_scalar = c - a;
@@ -911,12 +936,17 @@ void inline intersect_triangles_masked(
 
     // --- Update Hit Information ---
     
-    // 1. Get the precomputed triangle normal
-    auto new_norm_x = tri_norm_x;
-    auto new_norm_y = tri_norm_y;
-    auto new_norm_z = tri_norm_z;
+    // Compute the normal (smooth or flat)
+    auto w = one_batch - u - v;
+    auto interp_norm_x = w * v0_norm_x + u * v1_norm_x + v * v2_norm_x;
+    auto interp_norm_y = w * v0_norm_y + u * v1_norm_y + v * v2_norm_y;
+    auto interp_norm_z = w * v0_norm_z + u * v1_norm_z + v * v2_norm_z;
+
+    auto new_norm_x = G_SMOOTH_SHADING_ENABLED ? interp_norm_x : tri_norm_x;
+    auto new_norm_y = G_SMOOTH_SHADING_ENABLED ? interp_norm_y : tri_norm_y;
+    auto new_norm_z = G_SMOOTH_SHADING_ENABLED ? interp_norm_z : tri_norm_z;
     
-    // 2. Conditionally store the triangle normal
+    // 2. Conditionally store the normal
     norm_x_out = xs::select(final_hit_mask, new_norm_x, norm_x_out);
     norm_y_out = xs::select(final_hit_mask, new_norm_y, norm_y_out);
     norm_z_out = xs::select(final_hit_mask, new_norm_z, norm_z_out);

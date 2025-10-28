@@ -3,6 +3,8 @@
 #include <vector>
 #include <string>
 
+//global state
+inline bool G_SMOOTH_SHADING_ENABLED = false;
 
 typedef float fl;
 

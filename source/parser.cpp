@@ -8,6 +8,7 @@
 #include "types.hpp" 
 #include "utils.hpp"
 #include "cmath"
+#include "miniply.h"
 
 using json = nlohmann::json;
 
@@ -34,7 +35,13 @@ static Vec2i parseVec2i(const std::string& str) {
     ss >> vec.x >> vec.y;
     return vec;
 }
-
+static std::string get_directory(const std::string& path) {
+    size_t found = path.find_last_of("/\\");
+    if (found != std::string::npos) {
+        return path.substr(0, found); // e.g., "inputs/scene.json" -> "inputs"
+    }
+    return "."; // No directory part, use current directory
+}
 class Parser {
 public:
     static Scene parseScene(const std::string& filepath) {
@@ -274,82 +281,231 @@ public:
             }
             
             // Parse Mesh - push all faces directly into TriangleData
+            // Parse Mesh - push all faces directly into TriangleData
             if (objects.contains("Mesh")) {
                 auto parseMesh = [&](const json& obj) {
                     int mesh_id = std::stoi(obj.at("_id").get<std::string>());
                     int material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
                     
-                    std::string facesDataStr;
                     const auto& facesData = obj.at("Faces");
                     
-                    // Handle both formats: direct string or object with _data field
-                    if (facesData.is_string()) {
-                        facesDataStr = facesData.get<std::string>();
-                    } else if (facesData.is_object() && facesData.contains("_data")) {
-                        facesDataStr = facesData.at("_data").get<std::string>();
+                    // --- NEW LOGIC: Handle _plyFile ---
+                    if (facesData.is_object() && facesData.contains("_plyFile")) {
+                        std::string ply_relative_path = facesData.at("_plyFile").get<std::string>();
+
+                        // --- MODIFICATION: Resolve path relative to JSON file ---
+                        std::string json_dir = get_directory(filepath); // filepath is from parseScene
+                        std::string ply_filename = json_dir + "/" + ply_relative_path;
+                        
+                        // 1. Get the current vertex count as our offset
+                        size_t vertex_offset = scene.vertex_data__.v_pos_x.size();
+
+                        miniply::PLYReader reader(ply_filename.c_str());
+                        if (!reader.valid()) {
+                            throw std::runtime_error("Could not open or parse PLY file: " + ply_filename);
+                        }
+
+                        // --- 2. Load Vertices from PLY ---
+                        std::vector<float> ply_verts;
+                        uint32_t num_ply_verts = 0;
+
+                        while (reader.has_element()) {
+                            if (reader.element_is(miniply::kPLYVertexElement)) {
+                                if (!reader.load_element()) {
+                                    throw std::runtime_error("Could not load vertex element from " + ply_filename);
+                                }
+                                
+                                num_ply_verts = reader.num_rows();
+                                if (num_ply_verts == 0) break; // No vertices
+
+                                uint32_t pos_props[3];
+                                if (!reader.find_pos(pos_props)) {
+                                     throw std::runtime_error("No 'x', 'y', 'z' properties in " + ply_filename);
+                                }
+
+                                // Extract vertex data into a temporary buffer
+                                ply_verts.resize(num_ply_verts * 3);
+                                reader.extract_properties(pos_props, 3, miniply::PLYPropertyType::Float, ply_verts.data());
+                                
+                                // Reserve space in scene data for efficiency
+                                scene.vertex_data__.v_pos_x.reserve(vertex_offset + num_ply_verts);
+                                scene.vertex_data__.v_pos_y.reserve(vertex_offset + num_ply_verts);
+                                scene.vertex_data__.v_pos_z.reserve(vertex_offset + num_ply_verts);
+                                scene.vertex_data__.v_nor_x.reserve(vertex_offset + num_ply_verts);
+                                scene.vertex_data__.v_nor_y.reserve(vertex_offset + num_ply_verts);
+                                scene.vertex_data__.v_nor_z.reserve(vertex_offset + num_ply_verts);
+
+                                // Append new vertices and initialize their normals to zero
+                                for (size_t i = 0; i < num_ply_verts; ++i) {
+                                    scene.vertex_data__.v_pos_x.push_back(ply_verts[i * 3 + 0]);
+                                    scene.vertex_data__.v_pos_y.push_back(ply_verts[i * 3 + 1]);
+                                    scene.vertex_data__.v_pos_z.push_back(ply_verts[i * 3 + 2]);
+                                    scene.vertex_data__.v_nor_x.push_back(0.0f);
+                                    scene.vertex_data__.v_nor_y.push_back(0.0f);
+                                    scene.vertex_data__.v_nor_z.push_back(0.0f);
+                                }
+                                break; // Found vertex element, stop loop
+                            }
+                            reader.next_element();
+                        }
+                        
+                        if (num_ply_verts == 0) {
+                            std::cerr << "Warning: PLY file " << ply_filename << " has no vertices. Skipping mesh." << std::endl;
+                            return; // Use 'return' since we are in a lambda
+                        }
+
+                        // --- 3. Load Faces from PLY ---
+                        // We must reset the reader to find the face element
+                        miniply::PLYReader face_reader(ply_filename.c_str());
+                        while (face_reader.has_element()) {
+                            if (face_reader.element_is(miniply::kPLYFaceElement)) {
+                                if (!face_reader.load_element()) {
+                                    throw std::runtime_error("Could not load face element from " + ply_filename);
+                                }
+
+                                uint32_t face_props[1];
+                                // Find "vertex_indices" or "vertex_index"
+                                if (!face_reader.find_indices(face_props)) {
+                                    throw std::runtime_error("No 'vertex_indices' property in " + ply_filename);
+                                }
+                                
+                                uint32_t prop_idx = face_props[0];
+                                uint32_t num_tris = face_reader.num_triangles(prop_idx);
+                                if (num_tris == 0) break; // No triangles
+
+                                std::vector<int> face_indices(num_tris * 3);
+                                
+                                // This function handles triangulation of quads/polygons
+                                face_reader.extract_triangles(prop_idx, ply_verts.data(), num_ply_verts, 
+                                                              miniply::PLYPropertyType::Int, face_indices.data());
+
+                                // --- 4. Create Triangles & Accumulate Normals ---
+                                int triangle_counter = 0;
+                                for (size_t i = 0; i < face_indices.size(); i += 3) {
+                                    // Apply offset. PLY indices are 0-based.
+                                    int index_v0 = face_indices[i + 0] + vertex_offset;
+                                    int index_v1 = face_indices[i + 1] + vertex_offset;
+                                    int index_v2 = face_indices[i + 2] + vertex_offset;
+
+                                    // --- RE-USED LOGIC from your _data parser ---
+                                    fl v0_x = scene.vertex_data__.v_pos_x[index_v0];
+                                    fl v0_y = scene.vertex_data__.v_pos_y[index_v0];
+                                    fl v0_z = scene.vertex_data__.v_pos_z[index_v0];
+                                    
+                                    fl v1_x = scene.vertex_data__.v_pos_x[index_v1];
+                                    fl v1_y = scene.vertex_data__.v_pos_y[index_v1];
+                                    fl v1_z = scene.vertex_data__.v_pos_z[index_v1];
+                                    
+                                    fl v2_x = scene.vertex_data__.v_pos_x[index_v2];
+                                    fl v2_y = scene.vertex_data__.v_pos_y[index_v2];
+                                    fl v2_z = scene.vertex_data__.v_pos_z[index_v2];
+                                    
+                                    fl edge1_x, edge1_y, edge1_z;
+                                    fl edge2_x, edge2_y, edge2_z;
+                                    subtract_scalar(v1_x, v1_y, v1_z, v0_x, v0_y, v0_z, edge1_x, edge1_y, edge1_z);
+                                    subtract_scalar(v2_x, v2_y, v2_z, v0_x, v0_y, v0_z, edge2_x, edge2_y, edge2_z);
+                                    
+                                    fl face_norm_x, face_norm_y, face_norm_z;
+                                    cross_scalar(edge1_x, edge1_y, edge1_z, edge2_x, edge2_y, edge2_z, 
+                                               face_norm_x, face_norm_y, face_norm_z);
+                                    
+                                    fl norm_x = face_norm_x, norm_y = face_norm_y, norm_z = face_norm_z;
+                                    normalize_scalar(norm_x, norm_y, norm_z);
+                                    
+                                    scene.triangle_data__.v0_ind.push_back(index_v0);
+                                    scene.triangle_data__.v1_ind.push_back(index_v1);
+                                    scene.triangle_data__.v2_ind.push_back(index_v2);
+                                    scene.triangle_data__.tri_norm_x.push_back(norm_x);
+                                    scene.triangle_data__.tri_norm_y.push_back(norm_y);
+                                    scene.triangle_data__.tri_norm_z.push_back(norm_z);
+                                    scene.triangle_data__.triangle_id.push_back(mesh_id * 1000000 + triangle_counter);
+                                    scene.triangle_data__.triangle_material_id.push_back(material_id);
+                                    
+                                    // Accumulate area-weighted normals
+                                    scene.vertex_data__.v_nor_x[index_v0] += face_norm_x;
+                                    scene.vertex_data__.v_nor_y[index_v0] += face_norm_y;
+                                    scene.vertex_data__.v_nor_z[index_v0] += face_norm_z;
+                                    
+                                    scene.vertex_data__.v_nor_x[index_v1] += face_norm_x;
+                                    scene.vertex_data__.v_nor_y[index_v1] += face_norm_y;
+                                    scene.vertex_data__.v_nor_z[index_v1] += face_norm_z;
+                                    
+                                    scene.vertex_data__.v_nor_x[index_v2] += face_norm_x;
+                                    scene.vertex_data__.v_nor_y[index_v2] += face_norm_y;
+                                    scene.vertex_data__.v_nor_z[index_v2] += face_norm_z;
+                                    
+                                    triangle_counter++;
+                                }
+                                break; // Found face element, stop loop
+                            }
+                            face_reader.next_element();
+                        }
                     }
-                    
-                    if (!facesDataStr.empty()) {
-                        std::stringstream faceStream(facesDataStr);
-                        int v0, v1, v2;
-                        int triangle_counter = 0;
-                        while (faceStream >> v0 >> v1 >> v2) {
-                            // Convert from 1-based to 0-based indexing
-                            int index_v0 = v0 - 1, index_v1 = v1 - 1, index_v2 = v2 - 1;
-                            
-                            // Get vertex positions from SoA
-                            fl v0_x = scene.vertex_data__.v_pos_x[index_v0];
-                            fl v0_y = scene.vertex_data__.v_pos_y[index_v0];
-                            fl v0_z = scene.vertex_data__.v_pos_z[index_v0];
-                            
-                            fl v1_x = scene.vertex_data__.v_pos_x[index_v1];
-                            fl v1_y = scene.vertex_data__.v_pos_y[index_v1];
-                            fl v1_z = scene.vertex_data__.v_pos_z[index_v1];
-                            
-                            fl v2_x = scene.vertex_data__.v_pos_x[index_v2];
-                            fl v2_y = scene.vertex_data__.v_pos_y[index_v2];
-                            fl v2_z = scene.vertex_data__.v_pos_z[index_v2];
-                            
-                            // Calculate edges using scalar operations
-                            fl edge1_x, edge1_y, edge1_z;
-                            fl edge2_x, edge2_y, edge2_z;
-                            subtract_scalar(v1_x, v1_y, v1_z, v0_x, v0_y, v0_z, edge1_x, edge1_y, edge1_z);
-                            subtract_scalar(v2_x, v2_y, v2_z, v0_x, v0_y, v0_z, edge2_x, edge2_y, edge2_z);
-                            
-                            // Calculate face normal (not normalized yet for area weighting)
-                            fl face_norm_x, face_norm_y, face_norm_z;
-                            cross_scalar(edge1_x, edge1_y, edge1_z, edge2_x, edge2_y, edge2_z, 
-                                       face_norm_x, face_norm_y, face_norm_z);
-                            
-                            // Store normalized face normal in TriangleData
-                            fl norm_x = face_norm_x, norm_y = face_norm_y, norm_z = face_norm_z;
-                            normalize_scalar(norm_x, norm_y, norm_z);
-                            
-                            // Push triangle directly into TriangleData (not into separate mesh structure)
-                            scene.triangle_data__.v0_ind.push_back(index_v0);
-                            scene.triangle_data__.v1_ind.push_back(index_v1);
-                            scene.triangle_data__.v2_ind.push_back(index_v2);
-                            scene.triangle_data__.tri_norm_x.push_back(norm_x);
-                            scene.triangle_data__.tri_norm_y.push_back(norm_y);
-                            scene.triangle_data__.tri_norm_z.push_back(norm_z);
-                            // Use mesh_id * 1000000 + face_index as unique triangle ID
-                            scene.triangle_data__.triangle_id.push_back(mesh_id * 1000000 + triangle_counter);
-                            scene.triangle_data__.triangle_material_id.push_back(material_id);
-                            
-                            // Accumulate area-weighted normals for each vertex (using unnormalized cross product)
-                            scene.vertex_data__.v_nor_x[index_v0] += face_norm_x;
-                            scene.vertex_data__.v_nor_y[index_v0] += face_norm_y;
-                            scene.vertex_data__.v_nor_z[index_v0] += face_norm_z;
-                            
-                            scene.vertex_data__.v_nor_x[index_v1] += face_norm_x;
-                            scene.vertex_data__.v_nor_y[index_v1] += face_norm_y;
-                            scene.vertex_data__.v_nor_z[index_v1] += face_norm_z;
-                            
-                            scene.vertex_data__.v_nor_x[index_v2] += face_norm_x;
-                            scene.vertex_data__.v_nor_y[index_v2] += face_norm_y;
-                            scene.vertex_data__.v_nor_z[index_v2] += face_norm_z;
-                            
-                            triangle_counter++;
+                    // --- ORIGINAL LOGIC: Handle _data or string ---
+                    else {
+                        std::string facesDataStr;
+                        if (facesData.is_string()) {
+                            facesDataStr = facesData.get<std::string>();
+                        } else if (facesData.is_object() && facesData.contains("_data")) {
+                            facesDataStr = facesData.at("_data").get<std::string>();
+                        }
+                        
+                        if (!facesDataStr.empty()) {
+                            std::stringstream faceStream(facesDataStr);
+                            int v0, v1, v2;
+                            int triangle_counter = 0;
+                            while (faceStream >> v0 >> v1 >> v2) {
+                                // Convert from 1-based (JSON) to 0-based indexing
+                                int index_v0 = v0 - 1, index_v1 = v1 - 1, index_v2 = v2 - 1;
+                                
+                                fl v0_x = scene.vertex_data__.v_pos_x[index_v0];
+                                fl v0_y = scene.vertex_data__.v_pos_y[index_v0];
+                                fl v0_z = scene.vertex_data__.v_pos_z[index_v0];
+                                
+                                fl v1_x = scene.vertex_data__.v_pos_x[index_v1];
+                                fl v1_y = scene.vertex_data__.v_pos_y[index_v1];
+                                fl v1_z = scene.vertex_data__.v_pos_z[index_v1];
+                                
+                                fl v2_x = scene.vertex_data__.v_pos_x[index_v2];
+                                fl v2_y = scene.vertex_data__.v_pos_y[index_v2];
+                                fl v2_z = scene.vertex_data__.v_pos_z[index_v2];
+                                
+                                fl edge1_x, edge1_y, edge1_z;
+                                fl edge2_x, edge2_y, edge2_z;
+                                subtract_scalar(v1_x, v1_y, v1_z, v0_x, v0_y, v0_z, edge1_x, edge1_y, edge1_z);
+                                subtract_scalar(v2_x, v2_y, v2_z, v0_x, v0_y, v0_z, edge2_x, edge2_y, edge2_z);
+                                
+                                fl face_norm_x, face_norm_y, face_norm_z;
+                                cross_scalar(edge1_x, edge1_y, edge1_z, edge2_x, edge2_y, edge2_z, 
+                                           face_norm_x, face_norm_y, face_norm_z);
+                                
+                                fl norm_x = face_norm_x, norm_y = face_norm_y, norm_z = face_norm_z;
+                                normalize_scalar(norm_x, norm_y, norm_z);
+                                
+                                scene.triangle_data__.v0_ind.push_back(index_v0);
+                                scene.triangle_data__.v1_ind.push_back(index_v1);
+                                scene.triangle_data__.v2_ind.push_back(index_v2);
+                                scene.triangle_data__.tri_norm_x.push_back(norm_x);
+                                scene.triangle_data__.tri_norm_y.push_back(norm_y);
+                                scene.triangle_data__.tri_norm_z.push_back(norm_z);
+                                scene.triangle_data__.triangle_id.push_back(mesh_id * 1000000 + triangle_counter);
+                                scene.triangle_data__.triangle_material_id.push_back(material_id);
+                                
+                                // Accumulate area-weighted normals
+                                scene.vertex_data__.v_nor_x[index_v0] += face_norm_x;
+                                scene.vertex_data__.v_nor_y[index_v0] += face_norm_y;
+                                scene.vertex_data__.v_nor_z[index_v0] += face_norm_z;
+                                
+                                scene.vertex_data__.v_nor_x[index_v1] += face_norm_x;
+                                scene.vertex_data__.v_nor_y[index_v1] += face_norm_y;
+                                scene.vertex_data__.v_nor_z[index_v1] += face_norm_z;
+                                
+                                scene.vertex_data__.v_nor_x[index_v2] += face_norm_x;
+                                scene.vertex_data__.v_nor_y[index_v2] += face_norm_y;
+                                scene.vertex_data__.v_nor_z[index_v2] += face_norm_z;
+                                
+                                triangle_counter++;
+                            }
                         }
                     }
                 };

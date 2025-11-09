@@ -60,6 +60,112 @@ inline void normalize_on_place(Vec3f& v0){
      else 
      v0 = {0.f,0.f,0.f};
 };
+inline Mat4f operator*(Mat4f mat1, Mat4f mat2){
+    Mat4f res;
+    res.m11 = mat1.m11*mat2.m11 + mat1.m12*mat2.m21 + mat1.m13*mat2.m31 + mat1.m14*mat2.m41;
+    res.m12 = mat1.m11*mat2.m12 + mat1.m12*mat2.m22 + mat1.m13*mat2.m32 + mat1.m14*mat2.m42;
+    res.m13 = mat1.m11*mat2.m13 + mat1.m12*mat2.m23 + mat1.m13*mat2.m33 + mat1.m14*mat2.m43;
+    res.m14 = mat1.m11*mat2.m14 + mat1.m12*mat2.m24 + mat1.m13*mat2.m34 + mat1.m14*mat2.m44;
+    res.m21 = mat1.m21*mat2.m11 + mat1.m22*mat2.m21 + mat1.m23*mat2.m31 + mat1.m24*mat2.m41;
+    res.m22 = mat1.m21*mat2.m12 + mat1.m22*mat2.m22 + mat1.m23*mat2.m32 + mat1.m24*mat2.m42;
+    res.m23 = mat1.m21*mat2.m13 + mat1.m22*mat2.m23 + mat1.m23*mat2.m33 + mat1.m24*mat2.m43;
+    res.m24 = mat1.m21*mat2.m14 + mat1.m22*mat2.m24 + mat1.m23*mat2.m34 + mat1.m24*mat2.m44;
+    res.m31 = mat1.m31*mat2.m11 + mat1.m32*mat2.m21 + mat1.m33*mat2.m31 + mat1.m34*mat2.m41;
+    res.m32 = mat1.m31*mat2.m12 + mat1.m32*mat2.m22 + mat1.m33*mat2.m32 + mat1.m34*mat2.m42;
+    res.m33 = mat1.m31*mat2.m13 + mat1.m32*mat2.m23 + mat1.m33*mat2.m33 + mat1.m34*mat2.m43;
+    res.m34 = mat1.m31*mat2.m14 + mat1.m32*mat2.m24 + mat1.m33*mat2.m34 + mat1.m34*mat2.m44;
+    res.m41 = mat1.m41*mat2.m11 + mat1.m42*mat2.m21 + mat1.m43*mat2.m31 + mat1.m44*mat2.m41;
+    res.m42 = mat1.m41*mat2.m12 + mat1.m42*mat2.m22 + mat1.m43*mat2.m32 + mat1.m44*mat2.m42;
+    res.m43 = mat1.m41*mat2.m13 + mat1.m42*mat2.m23 + mat1.m43*mat2.m33 + mat1.m44*mat2.m43;
+    res.m44 = mat1.m41*mat2.m14 + mat1.m42*mat2.m24 + mat1.m43*mat2.m34 + mat1.m44*mat2.m44;
+    return res;
+}
+inline Mat4f mat_inv(Mat4f mat1){
+    fl det = mat1.m11 * (mat1.m22 * (mat1.m33 * mat1.m44 - mat1.m34 * mat1.m43) - mat1.m23 * (mat1.m32 * mat1.m44 - mat1.m34 * mat1.m42) + mat1.m24 * (mat1.m32 * mat1.m43 - mat1.m33 * mat1.m42))
+          - mat1.m12 * (mat1.m21 * (mat1.m33 * mat1.m44 - mat1.m34 * mat1.m43) - mat1.m23 * (mat1.m31 * mat1.m44 - mat1.m34 * mat1.m41) + mat1.m24 * (mat1.m31 * mat1.m43 - mat1.m33 * mat1.m41))
+          + mat1.m13 * (mat1.m21 * (mat1.m32 * mat1.m44 - mat1.m34 * mat1.m42) - mat1.m22 * (mat1.m31 * mat1.m44 - mat1.m34 * mat1.m41) + mat1.m24 * (mat1.m31 * mat1.m42 - mat1.m32 * mat1.m41))
+          - mat1.m14 * (mat1.m21 * (mat1.m32 * mat1.m43 - mat1.m33 * mat1.m42) - mat1.m22 * (mat1.m31 * mat1.m43 - mat1.m33 * mat1.m41) + mat1.m23 * (mat1.m31 * mat1.m42 - mat1.m32 * mat1.m41));
+    if (std::abs(det) < 1e-6) {
+        return Mat4f{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+    }
+    fl inv_det = 1.0f / det;
+    Mat4f inv;
+    inv.m11 = inv_det * (mat1.m22 * (mat1.m33 * mat1.m44 - mat1.m34 * mat1.m43) - mat1.m23 * (mat1.m32 * mat1.m44 - mat1.m34 * mat1.m42) + mat1.m24 * (mat1.m32 * mat1.m43 - mat1.m33 * mat1.m42));
+    inv.m12 = inv_det * - (mat1.m21 * (mat1.m33 * mat1.m44 - mat1.m34 * mat1.m43) - mat1.m23 * (mat1.m31 * mat1.m44 - mat1.m34 * mat1.m41) + mat1.m24 * (mat1.m31 * mat1.m43 - mat1.m33 * mat1.m41));
+    inv.m13 = inv_det * (mat1.m21 * (mat1.m32 * mat1.m44 - mat1.m34 * mat1.m42) - mat1.m22 * (mat1.m31 * mat1.m44 - mat1.m34 * mat1.m41) + mat1.m24 * (mat1.m31 * mat1.m42 - mat1.m32 * mat1.m41));
+    inv.m14 = inv_det * - (mat1.m21 * (mat1.m32 * mat1.m43 - mat1.m33 * mat1.m42) - mat1.m22 * (mat1.m31 * mat1.m43 - mat1.m33 * mat1.m41) + mat1.m23 * (mat1.m31 * mat1.m42 - mat1.m32 * mat1.m41));
+    inv.m21 = inv_det * - (mat1.m12 * (mat1.m33 * mat1.m44 - mat1.m34 * mat1.m43) - mat1.m13 * (mat1.m32 * mat1.m44 - mat1.m34 * mat1.m42) + mat1.m14 * (mat1.m32 * mat1.m43 - mat1.m33 * mat1.m42));
+    inv.m22 = inv_det * (mat1.m11 * (mat1.m33 * mat1.m44 - mat1.m34 * mat1.m43) - mat1.m13 * (mat1.m31 * mat1.m44 - mat1.m34 * mat1.m41) + mat1.m14 * (mat1.m31 * mat1.m43 - mat1.m33 * mat1.m41));
+    inv.m23 = inv_det * - (mat1.m11 * (mat1.m32 * mat1.m44 - mat1.m34 * mat1.m42) - mat1.m12 * (mat1.m31 * mat1.m44 - mat1.m34 * mat1.m41) + mat1.m14 * (mat1.m31 * mat1.m42 - mat1.m32 * mat1.m41));
+    inv.m24 = inv_det * (mat1.m11 * (mat1.m32 * mat1.m43 - mat1.m33 * mat1.m42) - mat1.m12 * (mat1.m31 * mat1.m43 - mat1.m33 * mat1.m41) + mat1.m13 * (mat1.m31 * mat1.m42 - mat1.m32 * mat1.m41));
+    inv.m31 = inv_det * (mat1.m12 * (mat1.m23 * mat1.m44 - mat1.m24 * mat1.m43) - mat1.m13 * (mat1.m22 * mat1.m44 - mat1.m24 * mat1.m42) + mat1.m14 * (mat1.m22 * mat1.m43 - mat1.m23 * mat1.m42));
+    inv.m32 = inv_det * - (mat1.m11 * (mat1.m23 * mat1.m44 - mat1.m24 * mat1.m43) - mat1.m13 * (mat1.m21 * mat1.m44 - mat1.m24 * mat1.m41) + mat1.m14 * (mat1.m21 * mat1.m43 - mat1.m23 * mat1.m41));
+    inv.m33 = inv_det * (mat1.m11 * (mat1.m22 * mat1.m44 - mat1.m24 * mat1.m42) - mat1.m12 * (mat1.m21 * mat1.m44 - mat1.m24 * mat1.m41) + mat1.m14 * (mat1.m21 * mat1.m42 - mat1.m22 * mat1.m41));
+    inv.m34 = inv_det * - (mat1.m11 * (mat1.m22 * mat1.m43 - mat1.m23 * mat1.m42) - mat1.m12 * (mat1.m21 * mat1.m43 - mat1.m23 * mat1.m41) + mat1.m13 * (mat1.m21 * mat1.m42 - mat1.m22 * mat1.m41));
+    inv.m41 = inv_det * - (mat1.m12 * (mat1.m23 * mat1.m34 - mat1.m24 * mat1.m33) - mat1.m13 * (mat1.m22 * mat1.m34 - mat1.m24 * mat1.m32) + mat1.m14 * (mat1.m22 * mat1.m33 - mat1.m23 * mat1.m32));
+    inv.m42 = inv_det * (mat1.m11 * (mat1.m23 * mat1.m34 - mat1.m24 * mat1.m33) - mat1.m13 * (mat1.m21 * mat1.m34 - mat1.m24 * mat1.m31) + mat1.m14 * (mat1.m21 * mat1.m33 - mat1.m23 * mat1.m31));
+    inv.m43 = inv_det * - (mat1.m11 * (mat1.m22 * mat1.m34 - mat1.m24 * mat1.m32) - mat1.m12 * (mat1.m21 * mat1.m34 - mat1.m24 * mat1.m31) + mat1.m14 * (mat1.m21 * mat1.m32 - mat1.m22 * mat1.m31));
+    inv.m44 = inv_det * (mat1.m11 * (mat1.m22 * mat1.m33 - mat1.m23 * mat1.m32) - mat1.m12 * (mat1.m21 * mat1.m33 - mat1.m23 * mat1.m31) + mat1.m13 * (mat1.m21 * mat1.m32 - mat1.m22 * mat1.m31));
+    return inv;
+}
+// GEMINI created code parts
+inline Mat4f mat_transpose(Mat4f mat) {
+    std::swap(mat.m12, mat.m21);
+    std::swap(mat.m13, mat.m31);
+    std::swap(mat.m14, mat.m41);
+    std::swap(mat.m23, mat.m32);
+    std::swap(mat.m24, mat.m42);
+    std::swap(mat.m34, mat.m43);
+    return mat;
+}
+// GEMINI created code parts
+inline Vec4f operator*(Mat4f mat1,Vec4f vec1){
+    Vec4f res;
+    res.x = mat1.m11 * vec1.x + mat1.m12 * vec1.y + mat1.m13 * vec1.z + mat1.m14 * vec1.w;
+    res.y = mat1.m21 * vec1.x + mat1.m22 * vec1.y + mat1.m23 * vec1.z + mat1.m24 * vec1.w;
+    res.z = mat1.m31 * vec1.x + mat1.m32 * vec1.y + mat1.m33 * vec1.z + mat1.m34 * vec1.w;
+    res.w = mat1.m41 * vec1.x + mat1.m42 * vec1.y + mat1.m43 * vec1.z + mat1.m44 * vec1.w;
+    return res;
+}
+// GEMINI created code parts
+inline Mat4f create_identity_matrix() {
+    Mat4f mat;
+    mat.m11 = 1.0f; mat.m22 = 1.0f; mat.m33 = 1.0f; mat.m44 = 1.0f;
+    return mat;
+}
+
+inline Mat4f create_translation_matrix(Vec3f t) {
+    Mat4f mat = create_identity_matrix();
+    mat.m14 = t.x;
+    mat.m24 = t.y;
+    mat.m34 = t.z;
+    return mat;
+}
+
+inline Mat4f create_scaling_matrix(Vec3f s) {
+    Mat4f mat = create_identity_matrix();
+    mat.m11 = s.x;
+    mat.m22 = s.y;
+    mat.m33 = s.z;
+    return mat;
+}
+
+inline Mat4f create_rotation_matrix(fl angle_degrees, Vec3f axis) {
+    Mat4f mat = create_identity_matrix();
+    fl angle_rad = angle_degrees * (M_PI / 180.0f);
+    normalize_on_place(axis);
+    fl c = cos(angle_rad);
+    fl s = sin(angle_rad);
+    fl t = 1.0f - c;
+    fl x = axis.x, y = axis.y, z = axis.z;
+
+    mat.m11 = t*x*x + c;   mat.m12 = t*x*y - s*z; mat.m13 = t*x*z + s*y;
+    mat.m21 = t*x*y + s*z; mat.m22 = t*y*y + c;   mat.m23 = t*y*z - s*x;
+    mat.m31 = t*x*z - s*y; mat.m32 = t*y*z + s*x; mat.m33 = t*z*z + c;
+
+    return mat;
+}
+// GEMINI created code parts
 
 
 //SCALAR-BASED VECTOR OPERATIONS (for SoA data structures)

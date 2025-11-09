@@ -2,11 +2,21 @@
 
 #include <vector>
 #include <string>
+// GEMINI created code parts
+#include <map>
+// GEMINI created code parts
+
 
 //global state
 inline bool G_SMOOTH_SHADING_ENABLED = false;
 
+
 typedef float fl;
+
+typedef enum PrimType{
+    TRIANGLE,
+    SPHERE
+}pt;
 
 // 3D vector of floats.
 struct Vec3f {
@@ -33,8 +43,23 @@ struct Mat3f{
        m21=0,m22=0,m23=0,
        m31=0,m32=0,m33=0;
 };
+struct Mat4f{
+    fl m11=0,m12=0,m13=0,m14=0,
+       m21=0,m22=0,m23=0,m24=0,
+       m31=0,m32=0,m33=0,m34=0,
+       m41=0,m42=0,m43=0,m44=0;
+    };
 
-// Holds all properties related to a single material.
+struct AABB{
+    fl bbox_xmin;
+    fl bbox_ymin;
+    fl bbox_zmin;
+
+    fl bbox_xmax;
+    fl bbox_ymax;
+    fl bbox_zmax;
+};
+    // Holds all properties related to a single material.
 struct Material {
     std::string type;
     Vec3f ambient_reflectance;
@@ -55,6 +80,7 @@ struct ColorBlock{
 struct ColorBlockFl{
     fl rgb[24]={};
 };
+
 
 
 struct SoARayQueue{
@@ -146,13 +172,14 @@ struct HitRecord{
     int material_id;
 };
 
-// Represents an infinite plane object (still using AoS - not many planes in typical scenes).
-struct Plane {
-    Vec3f normal;
-    int id;
-    int material_id;
-    int point_vertex_id; // ID of a vertex that lies on the plane
-};
+
+
+//This one will hold the necessary information for mesh indexing, which will be helpful to keep the data oriented way of storing vertices along with the blas tlas structures 
+//No need for SoA since will be accessed randomly//small size
+//FOR REAL BASE MESHES
+
+
+
 
 // SoA (Structure of Arrays) data structures
 struct VertexData{
@@ -193,7 +220,14 @@ struct TriangleData{
     std::vector<fl> tri_norm_y;
     std::vector<fl> tri_norm_z;
 
+    std::vector<fl> tri_centro_x;
+
+    std::vector<fl> tri_centro_y;
+
+    std::vector<fl> tri_centro_z;
+
     std::vector<int> triangle_id;
+    //should be -1 for mesh triangles
     std::vector<int> triangle_material_id;
 };
 
@@ -207,8 +241,36 @@ struct PlaneData{
     std::vector<int> plane_id;
 
     std::vector<int> plane_material_id;
+    
+};
+struct TransformationData{
+    // GEMINI created code parts
+    std::map<int, Mat4f> translations;
+    std::map<int, Mat4f> scalings;
+    std::map<int, Mat4f> rotations;
+    std::map<int, Mat4f> composites;
+    // GEMINI created code parts
+};
+struct MeshInfo{
+    Mat4f transformation_matrix;
+    // GEMINI created code parts
+    Mat4f inverse_transformation_matrix;
+  
+    // GEMINI created code parts
+    int id;
+    int base_mesh_id;
+    int base_triangle_index = -1;
+    int triangle_count = 0;
+    int material_id;
+    //will be transcended by the first mesh
+    int bvh_id=-1;
+    bool reset_transform=false;
 };
 
+struct PrimitiveData{
+    std::vector<PrimType> primitive_type;
+    std::vector<int> prim_index;
+};
 // The main struct that holds all scene data, parsed from the JSON file.
 struct Scene {
     // SoA (Structure of Arrays) for data-oriented design
@@ -217,7 +279,13 @@ struct Scene {
     SphereData sphere_data__;
     TriangleData triangle_data__;
     PlaneData plane_data__;
-
+    TransformationData transformation_data__;
+    PrimitiveData prim_data__;
+    
+    
+    // GEMINI created code parts
+    std::vector<MeshInfo> mesh_data;
+    // GEMINI created code parts
     
     std::vector<Camera> cameras;
     std::vector<Material> materials;
@@ -228,8 +296,32 @@ struct Scene {
     fl shadow_ray_epsilon;
     fl intersection_test_epsilon;
     int max_recursion_depth;
+    int primitive_count;
 };
 
+
+struct BVHNode{
+    AABB bbox;
+    int left_child_index;
+    int first_prim,prim_count;
+};
+
+struct TLASnode{
+    AABB bbox;
+    int leftBlas;
+};
+
+
+struct TLAS{
+
+};
+
+
+struct BVH{
+    BVHNode* root;
+    std::vector<int> prim_indices;
+    PrimType type;
+};
 
 
 

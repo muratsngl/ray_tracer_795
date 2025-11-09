@@ -3,6 +3,7 @@
 #include "parser.cpp"
 #include "rt_functions.hpp"
 #include "shader.hpp"
+#include "bvh.hpp"
 #include <omp.h>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -40,10 +41,15 @@ int main(int argc, char* argv[]) {
     auto parse_duration = std::chrono::duration_cast<std::chrono::milliseconds>(parse_end - parse_start);
     std::cout << "Parsing time: " << parse_duration.count() << " ms" << std::endl;
 
+    // Measure BVH build time
+    auto bvh_start = std::chrono::high_resolution_clock::now();
+    construct_bvh_node(scene);
+    auto bvh_end = std::chrono::high_resolution_clock::now();
+    auto bvh_duration = std::chrono::duration_cast<std::chrono::milliseconds>(bvh_end - bvh_start);
+    std::cout << "BVH build time: " << bvh_duration.count() << " ms" << std::endl;
 
     // Measure rendering time
     auto render_start = std::chrono::high_resolution_clock::now();
-
     //MAIN LOOP
     //INITIALIZE CAM AND RAYS
     for(const auto& cam:scene.cameras){
@@ -93,11 +99,11 @@ int main(int argc, char* argv[]) {
                             .d_z{d0.z, d1.z, d2.z, d3.z, d4.z, d5.z, d6.z, d7.z}
                         };
                                 
-                        return_closest_hit(ray_package,scene,scene.vertex_data__);
+                        //return_closest_hit(ray_package,scene,scene.vertex_data__);
                         
-                        shade(ray_package,scene,cb);
-                        
-                        
+                        //shade(ray_package,scene,cb);
+                        intersect_bvh_wrapper(ray_package,scene,0);
+                        shade_iterative(ray_package,scene,cb);
                        
                         //implement write caching here(after bvh implementation) 
                         //shade_trad(ray_package,scene,cb);

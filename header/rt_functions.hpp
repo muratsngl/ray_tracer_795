@@ -6,6 +6,7 @@
 #include <xsimd/xsimd.hpp>
 #include "utils.hpp" // Assuming this contains operator overloads for Vec3f
 #include "types.hpp"
+#include "bvh.hpp"
 
 namespace xs = xsimd;
 
@@ -1220,7 +1221,306 @@ void inline return_any_hit_shadow_masked(RP8& ray_pack, const Scene& scene, xsim
 }
 
 
+void inline intersect_aabb(const f_batch& orig_x, const f_batch& orig_y, const f_batch& orig_z,
+                           const f_batch& dir_x, const f_batch& dir_y, const f_batch& dir_z,
+                           const f_batch& current_t, AABB bbox, b_batch& active_mask){
+    f_batch bmin_x = xs::broadcast(bbox.bbox_xmin);
+    f_batch bmax_x = xs::broadcast(bbox.bbox_xmax);
+    f_batch bmin_y = xs::broadcast(bbox.bbox_ymin);
+    f_batch bmax_y = xs::broadcast(bbox.bbox_ymax);
+    f_batch bmin_z = xs::broadcast(bbox.bbox_zmin);
+    f_batch bmax_z = xs::broadcast(bbox.bbox_zmax);
 
+    f_batch tx1 = (bmin_x - orig_x) / dir_x;
+    f_batch tx2 = (bmax_x - orig_x) / dir_x;
+    f_batch tmin = xs::min(tx1, tx2);
+    f_batch tmax = xs::max(tx1, tx2);
 
+    f_batch ty1 = (bmin_y - orig_y) / dir_y;
+    f_batch ty2 = (bmax_y - orig_y) / dir_y;
+    tmin = xs::max(tmin, xs::min(ty1, ty2));
+    tmax = xs::min(tmax, xs::max(ty1, ty2));
+
+    f_batch tz1 = (bmin_z - orig_z) / dir_z;
+    f_batch tz2 = (bmax_z - orig_z) / dir_z;
+    tmin = xs::max(tmin, xs::min(tz1, tz2));
+    tmax = xs::min(tmax, xs::max(tz1, tz2));
+
+    b_batch intersects = (tmax >= tmin) && (tmax > 0.0f);
+    active_mask = active_mask && intersects;
+}
+
+void inline intersect_bvh(const f_batch& orig_x, const f_batch& orig_y, const f_batch& orig_z,
+                          const f_batch& dir_x, const f_batch& dir_y, const f_batch& dir_z,
+                          f_batch& t_min, i_batch& mat_id,
+                          f_batch& norm_x, f_batch& norm_y, f_batch& norm_z,
+                          const Scene& scene, const uint nodeId, b_batch active_mask){
+    
+    BVHNode& node = bvhNode[nodeId];
+    intersect_aabb(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z, t_min, node.bbox, active_mask);
+    //ray missed entirely
+    if(xs::none(active_mask))return;
+    //some of the rays intersected the box
+    if(node.left_child_index == 0){
+        for(int i = node.first_prim;i<node.prim_count+node.first_prim;i++)
+        {
+            int current_prim_index = scene.prim_data__.prim_index[i];
+            PrimType current_type = scene.prim_data__.primitive_type[i];
+            if(current_type == TRIANGLE) {
+                intersect_triangles_masked(dir_x, dir_y, dir_z, orig_x, orig_y, orig_z,
+                    t_min, mat_id, norm_x, norm_y, norm_z,
+                    scene.triangle_data__, scene.vertex_data__, scene, current_prim_index,
+                    active_mask);
+            }
+            else {
+                intersect_spheres_masked(dir_x, dir_y, dir_z, orig_x, orig_y, orig_z,
+                    t_min, mat_id, norm_x, norm_y, norm_z,
+                    scene.sphere_data__, scene.vertex_data__, scene, current_prim_index,
+                    active_mask);
+            }
+        }
+    }
+    else{
+        intersect_bvh(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z,
+                      t_min, mat_id, norm_x, norm_y, norm_z,
+                      scene, node.left_child_index, active_mask);
+        intersect_bvh(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z,
+                      t_min, mat_id, norm_x, norm_y, norm_z,
+                      scene, node.left_child_index + 1, active_mask);
+    }
+
+}
+
+void intersect_bvh_wrapper(RP8& ray_pack, const Scene& scene, const uint nodeId) {
+    // 1. Load the UNNORMALIZED data
+    auto dir_x = xs::load(&ray_pack.d_x[0]);
+    auto dir_y = xs::load(&ray_pack.d_y[0]);
+    auto dir_z = xs::load(&ray_pack.d_z[0]);
+
+    // 2. Calculate length-squared for all 8 vectors
+    auto len_sq = (dir_x * dir_x) + (dir_y * dir_y) + (dir_z * dir_z);
+
+    // 3. Calculate length      
+    auto len = xs::sqrt(len_sq);
+
+    // 4. Create a mask to prevent division by zero and normalize
+    b_batch valid_mask = (len > 1e-8f);
+    f_batch zero_batch(0.0f);
+    dir_x = xs::select(valid_mask, dir_x / len, zero_batch);
+    dir_y = xs::select(valid_mask, dir_y / len, zero_batch);
+    dir_z = xs::select(valid_mask, dir_z / len, zero_batch);
+
+    // 5. Load ray origins
+    f_batch orig_x = xs::load(&ray_pack.o_x[0]);
+    f_batch orig_y = xs::load(&ray_pack.o_y[0]);
+    f_batch orig_z = xs::load(&ray_pack.o_z[0]);
+
+    // 6. Load current intersection state (t_min, material id, and normals)
+    f_batch t_min = xs::load(&ray_pack.t_min[0]);
+    i_batch hit_id = xs::load(&ray_pack.mat_id[0]);
+    f_batch norm_x = xs::load(&ray_pack.hit_norm_x[0]);
+    f_batch norm_y = xs::load(&ray_pack.hit_norm_y[0]);
+    f_batch norm_z = xs::load(&ray_pack.hit_norm_z[0]);
+
+    // 7. Start with all rays active
+    b_batch active_mask = true;
+
+    // 8. Traverse BVH starting from nodeId
+    intersect_bvh(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z,
+                  t_min, hit_id, norm_x, norm_y, norm_z,
+                  scene, nodeId, active_mask);
+
+    // 9. Store the final results back into the ray packet
+    xs::store(&ray_pack.t_min[0], t_min);
+    xs::store(&ray_pack.mat_id[0], hit_id);
+    xs::store(&ray_pack.hit_norm_x[0], norm_x);
+    xs::store(&ray_pack.hit_norm_y[0], norm_y);
+    xs::store(&ray_pack.hit_norm_z[0], norm_z);
+
+    // 10. Calculate and store hit positions: P = O + t * D
+    f_batch infinity_batch = xs::broadcast(__builtin_inff());
+    // Only calculate for rays that actually hit something
+    b_batch final_hit_mask = (t_min < infinity_batch);
+
+    // Use select to avoid (inf * 0 = NaN) for rays that missed
+    auto hit_pos_x = xs::select(final_hit_mask, orig_x + t_min * dir_x, zero_batch);
+    auto hit_pos_y = xs::select(final_hit_mask, orig_y + t_min * dir_y, zero_batch);
+    auto hit_pos_z = xs::select(final_hit_mask, orig_z + t_min * dir_z, zero_batch);
+    
+    xs::store(&ray_pack.hit_pos_x[0], hit_pos_x);
+    xs::store(&ray_pack.hit_pos_y[0], hit_pos_y);
+    xs::store(&ray_pack.hit_pos_z[0], hit_pos_z);
+}
+
+// BVH Any-Hit traversal for shadow rays (stops at first hit)
+void inline intersect_bvh_any_hit(const f_batch& orig_x, const f_batch& orig_y, const f_batch& orig_z,
+                                   const f_batch& dir_x, const f_batch& dir_y, const f_batch& dir_z,
+                                   const f_batch& t_max, b_batch& is_occluded,
+                                   const Scene& scene, const uint nodeId, const b_batch& active_mask,
+                                   const fl epsilon){
+    
+    // Early exit if all rays are already occluded or no rays are active
+    b_batch node_active_mask = active_mask & !is_occluded;
+    if(xs::none(node_active_mask)) return;
+    
+    BVHNode& node = bvhNode[nodeId];
+    
+    // Test AABB intersection
+    b_batch aabb_hit_mask = node_active_mask;
+    f_batch dummy_t = t_max; // We don't actually use t_min for shadow rays
+    intersect_aabb(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z, dummy_t, node.bbox, aabb_hit_mask);
+    
+    // If no rays hit the AABB, return early
+    if(xs::none(aabb_hit_mask)) return;
+    
+    // Leaf node: test primitives
+    if(node.left_child_index == 0){
+        for(int i = node.first_prim; i < node.prim_count + node.first_prim; i++)
+        {
+            b_batch prim_active_mask = aabb_hit_mask & !is_occluded;
+            if(xs::none(prim_active_mask)) return; // All rays occluded, early exit
+            
+            int current_prim_index = scene.prim_data__.prim_index[i];
+            PrimType current_type = scene.prim_data__.primitive_type[i];
+            
+            if(current_type == TRIANGLE) {
+                // Triangle intersection for shadow rays
+                const VertexData& vertices = scene.vertex_data__;
+                int i0 = scene.triangle_data__.v0_ind[current_prim_index];
+                int i1 = scene.triangle_data__.v1_ind[current_prim_index];
+                int i2 = scene.triangle_data__.v2_ind[current_prim_index];
+
+                Vec3f a = { vertices.v_pos_x[i0], vertices.v_pos_y[i0], vertices.v_pos_z[i0] };
+                Vec3f b = { vertices.v_pos_x[i1], vertices.v_pos_y[i1], vertices.v_pos_z[i1] };
+                Vec3f c = { vertices.v_pos_x[i2], vertices.v_pos_y[i2], vertices.v_pos_z[i2] };
+
+                auto e1_x = xs::broadcast(b.x - a.x);
+                auto e1_y = xs::broadcast(b.y - a.y);
+                auto e1_z = xs::broadcast(b.z - a.z);
+                auto e2_x = xs::broadcast(c.x - a.x);
+                auto e2_y = xs::broadcast(c.y - a.y);
+                auto e2_z = xs::broadcast(c.z - a.z);
+
+                auto pvec_x = dir_y * e2_z - dir_z * e2_y;
+                auto pvec_y = dir_z * e2_x - dir_x * e2_z;
+                auto pvec_z = dir_x * e2_y - dir_y * e2_x;
+                auto det = e1_x * pvec_x + e1_y * pvec_y + e1_z * pvec_z;
+                b_batch det_mask = (xs::abs(det) > epsilon);
+                if (xs::none(det_mask & prim_active_mask)) continue;
+                
+                f_batch zero_batch(0.0f);
+                auto invDet = xs::select(det_mask, 1.0f / det, zero_batch);
+                auto a_x = xs::broadcast(a.x);
+                auto a_y = xs::broadcast(a.y);
+                auto a_z = xs::broadcast(a.z);
+
+                auto tvec_x = orig_x - a_x;
+                auto tvec_y = orig_y - a_y;
+                auto tvec_z = orig_z - a_z;
+                auto u = (tvec_x * pvec_x + tvec_y * pvec_y + tvec_z * pvec_z) * invDet;
+
+                const fl bary_epsilon = 1e-5f;
+                f_batch one_batch(1.0f);
+                b_batch bary_mask = (u >= zero_batch - bary_epsilon) & (u <= one_batch + bary_epsilon);
+                if (xs::none(bary_mask & prim_active_mask)) continue;
+
+                auto qvec_x = tvec_y * e1_z - tvec_z * e1_y;
+                auto qvec_y = tvec_z * e1_x - tvec_x * e1_z;
+                auto qvec_z = tvec_x * e1_y - tvec_y * e1_x;
+                auto v = (dir_x * qvec_x + dir_y * qvec_y + dir_z * qvec_z) * invDet;
+                bary_mask = bary_mask & (v >= zero_batch - bary_epsilon) & (u + v <= one_batch + bary_epsilon);
+                if (xs::none(bary_mask & prim_active_mask)) continue;
+
+                auto t_new = (e2_x * qvec_x + e2_y * qvec_y + e2_z * qvec_z) * invDet;
+                
+                // Mark rays as occluded if they hit between epsilon and t_max
+                b_batch new_occlusion = prim_active_mask & det_mask & bary_mask & (t_new > epsilon) & (t_new < t_max);
+                is_occluded = is_occluded | new_occlusion;
+            }
+            else if(current_type == SPHERE) {
+                // Sphere intersection for shadow rays
+                const VertexData& vertices = scene.vertex_data__;
+                int center_vertex_id = scene.sphere_data__.sphere_center_vertex_id[current_prim_index];
+                auto sphere_center_x = xs::broadcast(vertices.v_pos_x[center_vertex_id]);
+                auto sphere_center_y = xs::broadcast(vertices.v_pos_y[center_vertex_id]);
+                auto sphere_center_z = xs::broadcast(vertices.v_pos_z[center_vertex_id]);
+                auto sphere_radius_sq = xs::broadcast(scene.sphere_data__.sphere_radius_sq[current_prim_index]);
+
+                auto oc_x = orig_x - sphere_center_x;
+                auto oc_y = orig_y - sphere_center_y;
+                auto oc_z = orig_z - sphere_center_z;
+
+                auto b_half = (dir_x * oc_x) + (dir_y * oc_y) + (dir_z * oc_z);
+                auto c = (oc_x * oc_x) + (oc_y * oc_y) + (oc_z * oc_z) - sphere_radius_sq;
+                auto discriminant = (b_half * b_half) - c;
+
+                b_batch hit_mask = (discriminant >= 0.f) & prim_active_mask;
+                if (xs::none(hit_mask)) continue;
+
+                auto sqrt_discriminant = xs::sqrt(discriminant);
+                auto t0 = -b_half - sqrt_discriminant;
+                auto t1 = -b_half + sqrt_discriminant;
+
+                // Check if either intersection is in valid range
+                b_batch t0_valid = (t0 > epsilon) & (t0 < t_max);
+                b_batch t1_valid = (t1 > epsilon) & (t1 < t_max);
+                b_batch new_occlusion = hit_mask & (t0_valid | t1_valid);
+                is_occluded = is_occluded | new_occlusion;
+            }
+        }
+    }
+    else {
+        // Internal node: traverse children
+        intersect_bvh_any_hit(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z,
+                              t_max, is_occluded, scene, node.left_child_index, active_mask, epsilon);
+        intersect_bvh_any_hit(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z,
+                              t_max, is_occluded, scene, node.left_child_index + 1, active_mask, epsilon);
+    }
+}
+
+// Wrapper for BVH shadow ray testing
+void inline intersect_bvh_any_hit_wrapper(RP8& ray_pack, const Scene& scene, b_batch& in_light, 
+                                          int light_index, const f_batch& light_distance,
+                                          const b_batch& active_mask, const uint nodeId = 0) {
+    
+    // Early exit if no rays are active
+    if (xs::none(active_mask)) {
+        in_light = false;
+        return;
+    }
+    
+    // Load and normalize ray directions
+    auto dir_x = xs::load(&ray_pack.d_x[0]);
+    auto dir_y = xs::load(&ray_pack.d_y[0]);
+    auto dir_z = xs::load(&ray_pack.d_z[0]);
+
+    auto len_sq = (dir_x * dir_x) + (dir_y * dir_y) + (dir_z * dir_z);
+    auto len = xs::sqrt(len_sq);
+    b_batch valid_len_mask = (len > 1e-8f);
+    b_batch norm_mask = active_mask & valid_len_mask;
+
+    f_batch zero_batch(0.0f);
+    dir_x = xs::select(norm_mask, dir_x / len, zero_batch);
+    dir_y = xs::select(norm_mask, dir_y / len, zero_batch);
+    dir_z = xs::select(norm_mask, dir_z / len, zero_batch);
+
+    // Load ray origins
+    f_batch orig_x = xs::load(&ray_pack.o_x[0]);
+    f_batch orig_y = xs::load(&ray_pack.o_y[0]);
+    f_batch orig_z = xs::load(&ray_pack.o_z[0]);
+
+    const f_batch& t_max = light_distance;
+    const fl epsilon = scene.intersection_test_epsilon;
+
+    // Start with no rays occluded
+    b_batch is_occluded = false;
+
+    // Traverse BVH
+    intersect_bvh_any_hit(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z,
+                          t_max, is_occluded, scene, nodeId, active_mask, epsilon);
+
+    // Set in_light as the inverse of is_occluded, respecting the active mask
+    in_light = !is_occluded & active_mask;
+}
 
 #endif

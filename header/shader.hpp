@@ -643,7 +643,10 @@ void inline specular(const RP8& ray_pack, const Scene& scene, ColorBlockFl& colo
 
 // ------------------- FIXED FUNCTION -------------------
 void inline shadow(RP8& ray_pack, const Scene& scene, xsimd::batch_bool<fl>& in_light, int light_index, const f_batch& light_distance){
-    return_any_hit_shadow(ray_pack, scene, in_light,light_index,light_distance);
+    // Use BVH for shadow ray intersection
+    b_batch active_mask = true; // All rays active for shadow test
+    intersect_bvh_any_hit_wrapper(ray_pack, scene, in_light, light_index, light_distance, active_mask, 0);
+    //return_any_hit_shadow(ray_pack, scene, in_light,light_index,light_distance);
 }
 // ----------------- END FIXED FUNCTION -----------------
 
@@ -1005,7 +1008,9 @@ void inline shade_local_masked(RP8& ray_pack, const Scene& scene, const b_batch&
         xs::store(shadow_rays.d_z, object_to_light_z);
 
         b_batch in_light;
-        return_any_hit_shadow_masked(shadow_rays, scene, in_light, i, distance, local_mask);
+        // Use BVH for shadow ray intersection
+        intersect_bvh_any_hit_wrapper(shadow_rays, scene, in_light, i, distance, local_mask, 0);
+        //return_any_hit_shadow_masked(shadow_rays, scene, in_light, i, distance, local_mask);
         
         b_batch final_shade_mask = in_light & local_mask;
         if(xs::none(final_shade_mask)) continue;
@@ -1098,7 +1103,9 @@ void inline shade_iterative(RP8& ray_pack, const Scene& scene, ColorBlock& color
         xs::store_aligned(ray_pack.t_min, t_inf);
         xs::store_aligned(ray_pack.mat_id, id_none);
         
-        return_closest_hit_masked(ray_pack, scene, scene.vertex_data__, active_mask);
+        // Use BVH for secondary ray intersection (reflections/refractions)
+        intersect_bvh_wrapper(ray_pack, scene, 0);
+        //return_closest_hit_masked(ray_pack, scene, scene.vertex_data__, active_mask);
 
         // 3. SCALAR DISPATCH LOOP (Your design)
         //PER LANE - Load current throughput before dispatch

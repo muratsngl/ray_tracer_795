@@ -3,6 +3,11 @@
 #include <sstream>
 #include <stdexcept>
 #include <functional> // Required for std::function
+#include <tuple>
+// GEMINI created code parts
+#include <map>
+#include <cmath>
+// GEMINI created code parts
 
 #include "json.hpp" 
 #include "types.hpp" 
@@ -42,6 +47,47 @@ static std::string get_directory(const std::string& path) {
     }
     return "."; // No directory part, use current directory
 }
+// GEMINI created code parts
+static Mat4f get_transform_by_id(const Scene& scene, char type, int id) {
+    const auto& tf = scene.transformation_data__;
+    switch (type) {
+        case 't':
+            if (tf.translations.count(id)) return tf.translations.at(id);
+            break;
+        case 's':
+            if (tf.scalings.count(id)) return tf.scalings.at(id);
+            break;
+        case 'r':
+            if (tf.rotations.count(id)) return tf.rotations.at(id);
+            break;
+        case 'c': // Composite
+            if (tf.composites.count(id)) return tf.composites.at(id);
+            break;
+    }
+    return create_identity_matrix();
+}
+
+static Mat4f build_composite_transform(const Scene& scene, const std::string& transform_str) {
+    Mat4f composite_matrix = create_identity_matrix();
+    std::stringstream ss(transform_str);
+    std::string tf_id_str;
+    
+    std::vector<std::pair<char, int>> transforms;
+    while (ss >> tf_id_str) {
+        if (tf_id_str.empty()) continue;
+        char type = tf_id_str[0];
+        int id = std::stoi(tf_id_str.substr(1));
+        transforms.push_back({type, id});
+    }
+    
+    for (const auto& tf_pair : transforms) {
+        Mat4f M_next = get_transform_by_id(scene, tf_pair.first, tf_pair.second);
+        composite_matrix = M_next * composite_matrix;
+    }
+    
+    return composite_matrix;
+}
+// GEMINI created code parts
 class Parser {
 public:
     static Scene parseScene(const std::string& filepath) {
@@ -135,7 +181,57 @@ public:
         if (sceneData.contains("Materials") && sceneData["Materials"].contains("Material")) {
             processOneOrMany(sceneData.at("Materials").at("Material"), parseMaterial);
         }
+        // GEMINI created code parts
+        auto parseTranslation = [&](const json& trans) {
+            int id = std::stoi(trans.at("_id").get<std::string>());
+            Vec3f t = parseVec3f(trans.at("_data").get<std::string>());
+            scene.transformation_data__.translations[id] = create_translation_matrix(t);
+        };
 
+        auto parseRotation = [&](const json& rot) {
+            int id = std::stoi(rot.at("_id").get<std::string>());
+            std::string data_str = rot.at("_data").get<std::string>();
+            std::stringstream ss(data_str);
+            fl angle;
+            Vec3f axis;
+            ss >> angle >> axis.x >> axis.y >> axis.z;
+            scene.transformation_data__.rotations[id] = create_rotation_matrix(angle, axis);
+        };
+
+        auto parseScaling = [&](const json& scale) {
+            int id = std::stoi(scale.at("_id").get<std::string>());
+            Vec3f s = parseVec3f(scale.at("_data").get<std::string>());
+            scene.transformation_data__.scalings[id] = create_scaling_matrix(s);
+        };
+
+        auto parseComposite = [&](const json& comp) {
+            int id = std::stoi(comp.at("_id").get<std::string>());
+            std::string data_str = comp.at("_data").get<std::string>();
+            std::stringstream ss(data_str);
+            Mat4f mat;
+            ss >> mat.m11 >> mat.m12 >> mat.m13 >> mat.m14
+                >> mat.m21 >> mat.m22 >> mat.m23 >> mat.m24
+                >> mat.m31 >> mat.m32 >> mat.m33 >> mat.m34
+                >> mat.m41 >> mat.m42 >> mat.m43 >> mat.m44;
+            scene.transformation_data__.composites[id] = mat;
+        };
+
+        if(sceneData.contains("Transformations")){
+            const auto& transforms = sceneData.at("Transformations");
+            if(transforms.contains("Translation")){
+                processOneOrMany(transforms.at("Translation"),parseTranslation);
+            }
+                if(transforms.contains("Rotation")){
+                processOneOrMany(transforms.at("Rotation"),parseRotation);
+            }
+                if(transforms.contains("Scaling")){
+                processOneOrMany(transforms.at("Scaling"),parseScaling);
+            }
+            if(transforms.contains("Composite")){
+                processOneOrMany(transforms.at("Composite"),parseComposite);
+            }
+        }
+        // GEMINI created code parts
         // --- Parse Lights (Generalized) ---
         auto parsePointLight = [&](const json& light) {
             int id = std::stoi(light.at("_id").get<std::string>());
@@ -211,6 +307,10 @@ public:
         if (sceneData.contains("Cameras") && sceneData["Cameras"].contains("Camera")) {
             processOneOrMany(sceneData.at("Cameras").at("Camera"), parseCamera);
         }
+        
+        // GEMINI created code parts
+        std::map<int, MeshInfo> mesh_info_map; 
+        // GEMINI created code parts
 
         // --- Parse Objects (Generalized) ---
         if (sceneData.contains("Objects")) {
@@ -223,11 +323,14 @@ public:
                     int center_vertex_id = std::stoi(obj.at("Center").get<std::string>()) - 1;
                     fl radius = std::stof(obj.at("Radius").get<std::string>());
                     
+                    scene.prim_data__.prim_index.push_back(scene.sphere_data__.sphere_id.size());
+                    scene.prim_data__.primitive_type.push_back(SPHERE);
                     // Directly populate SoA structure
                     scene.sphere_data__.sphere_id.push_back(id);
                     scene.sphere_data__.sphere_mat_id.push_back(material_id);
                     scene.sphere_data__.sphere_center_vertex_id.push_back(center_vertex_id);
                     scene.sphere_data__.sphere_radius_sq.push_back(radius*radius);
+                
                 };
                 processOneOrMany(objects.at("Sphere"), parseSphere);
             }
@@ -267,6 +370,13 @@ public:
                     cross_scalar(edge1_x, edge1_y, edge1_z, edge2_x, edge2_y, edge2_z, norm_x, norm_y, norm_z);
                     normalize_scalar(norm_x, norm_y, norm_z);
                     
+                    fl centro_x = (v0_x + v1_x+ v2_x)/3;
+                    fl centro_y = (v0_y + v1_y+ v2_y)/3;
+                    fl centro_z = (v0_z + v1_z+ v2_z)/3;
+                
+                    scene.prim_data__.prim_index.push_back(scene.triangle_data__.v0_ind.size());
+                    scene.prim_data__.primitive_type.push_back(TRIANGLE);
+
                     // Directly populate SoA structure
                     scene.triangle_data__.v0_ind.push_back(v0);
                     scene.triangle_data__.v1_ind.push_back(v1);
@@ -276,16 +386,44 @@ public:
                     scene.triangle_data__.tri_norm_z.push_back(norm_z);
                     scene.triangle_data__.triangle_id.push_back(id);
                     scene.triangle_data__.triangle_material_id.push_back(material_id);
+
+                    scene.triangle_data__.tri_centro_y.push_back(centro_y);
+
+                    scene.triangle_data__.tri_centro_z.push_back(centro_z);
+
+                    scene.triangle_data__.tri_centro_x.push_back(centro_x);
+
                 };
                 processOneOrMany(objects.at("Triangle"), parseTriangle);
             }
             
-            // Parse Mesh - push all faces directly into TriangleData
-            // Parse Mesh - push all faces directly into TriangleData
+
+            //HW1: Parse Mesh - push all faces directly into TriangleData
+            //HW2: Parse Mesh - push the data exactly as before, create a mesh info instance which will hold info required for instancing such as id and base triangle index.
             if (objects.contains("Mesh")) {
                 auto parseMesh = [&](const json& obj) {
-                    int mesh_id = std::stoi(obj.at("_id").get<std::string>());
-                    int material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
+                    // GEMINI created code parts
+                    MeshInfo mesh_info;
+                    mesh_info.id = std::stoi(obj.at("_id").get<std::string>());
+                    mesh_info.material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
+                    mesh_info.base_mesh_id = -1; // This is a base mesh
+                    mesh_info.reset_transform = false;
+                    
+                    mesh_info.base_triangle_index = scene.triangle_data__.v0_ind.size();
+                    int start_triangle_count = mesh_info.base_triangle_index;
+
+                    if (obj.contains("Transformations")) {
+                        mesh_info.transformation_matrix = build_composite_transform(scene, obj.at("Transformations").get<std::string>());
+                    } else {
+                        mesh_info.transformation_matrix = create_identity_matrix();
+                    }
+                    
+                    mesh_info.inverse_transformation_matrix = mat_inv(mesh_info.transformation_matrix);
+                 
+                    
+                    int mesh_id = mesh_info.id;
+                    int material_id = mesh_info.material_id;
+                    // GEMINI created code parts
                     
                     if (obj.contains("_shadingMode") && obj.at("_shadingMode").get<std::string>() == "smooth") {
                         G_SMOOTH_SHADING_ENABLED = true;
@@ -416,6 +554,14 @@ public:
                                     fl norm_x = face_norm_x, norm_y = face_norm_y, norm_z = face_norm_z;
                                     normalize_scalar(norm_x, norm_y, norm_z);
                                     
+                                    fl centro_x = (v0_x + v1_x+ v2_x)/3;
+                                    fl centro_y = (v0_y + v1_y+ v2_y)/3;
+                                    fl centro_z = (v0_z + v1_z+ v2_z)/3;
+                                
+                                    scene.prim_data__.prim_index.push_back(scene.triangle_data__.v0_ind.size());
+                                    scene.prim_data__.primitive_type.push_back(TRIANGLE);
+                                    
+
                                     scene.triangle_data__.v0_ind.push_back(index_v0);
                                     scene.triangle_data__.v1_ind.push_back(index_v1);
                                     scene.triangle_data__.v2_ind.push_back(index_v2);
@@ -424,6 +570,12 @@ public:
                                     scene.triangle_data__.tri_norm_z.push_back(norm_z);
                                     scene.triangle_data__.triangle_id.push_back(mesh_id * 1000000 + triangle_counter);
                                     scene.triangle_data__.triangle_material_id.push_back(material_id);
+
+                                    scene.triangle_data__.tri_centro_y.push_back(centro_y);
+
+                                    scene.triangle_data__.tri_centro_z.push_back(centro_z);
+
+                                    scene.triangle_data__.tri_centro_x.push_back(centro_x);
                                     
                                     // Accumulate area-weighted normals
                                     scene.vertex_data__.v_nor_x[index_v0] += face_norm_x;
@@ -485,13 +637,27 @@ public:
                                 
                                 fl norm_x = face_norm_x, norm_y = face_norm_y, norm_z = face_norm_z;
                                 normalize_scalar(norm_x, norm_y, norm_z);
+
+                                fl centro_x = (v0_x + v1_x+ v2_x)/3;
+                                fl centro_y = (v0_y + v1_y+ v2_y)/3;
+                                fl centro_z = (v0_z + v1_z+ v2_z)/3;
                                 
+                                scene.prim_data__.prim_index.push_back(scene.triangle_data__.v0_ind.size());
+                                scene.prim_data__.primitive_type.push_back(TRIANGLE);
+
                                 scene.triangle_data__.v0_ind.push_back(index_v0);
                                 scene.triangle_data__.v1_ind.push_back(index_v1);
                                 scene.triangle_data__.v2_ind.push_back(index_v2);
                                 scene.triangle_data__.tri_norm_x.push_back(norm_x);
                                 scene.triangle_data__.tri_norm_y.push_back(norm_y);
                                 scene.triangle_data__.tri_norm_z.push_back(norm_z);
+                                
+                                scene.triangle_data__.tri_centro_y.push_back(centro_y);
+
+                                scene.triangle_data__.tri_centro_z.push_back(centro_z);
+
+                                scene.triangle_data__.tri_centro_x.push_back(centro_x);
+                                
                                 scene.triangle_data__.triangle_id.push_back(mesh_id * 1000000 + triangle_counter);
                                 scene.triangle_data__.triangle_material_id.push_back(material_id);
                                 
@@ -512,9 +678,54 @@ public:
                             }
                         }
                     }
+                    // GEMINI created code parts
+                    int end_triangle_count = scene.triangle_data__.v0_ind.size();
+                    mesh_info.triangle_count = end_triangle_count - start_triangle_count;
+                    
+                    scene.mesh_data.push_back(mesh_info);
+                    mesh_info_map[mesh_info.id] = mesh_info;
+                    // GEMINI created code parts
                 };
                 processOneOrMany(objects.at("Mesh"), parseMesh);
             }
+            // GEMINI created code parts
+            if (objects.contains("MeshInstance")) {
+                auto parseMeshInstance = [&](const json& obj) {
+                    MeshInfo instance_info;
+                    instance_info.id = std::stoi(obj.at("_id").get<std::string>());
+                    instance_info.material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
+                    instance_info.base_mesh_id = std::stoi(obj.at("_baseMeshId").get<std::string>());
+                    instance_info.reset_transform = obj.contains("_resetTransform") ? 
+                        (obj.at("_resetTransform").get<std::string>() == "true") : false;
+
+                    if (mesh_info_map.find(instance_info.base_mesh_id) == mesh_info_map.end()) {
+                        throw std::runtime_error("Could not find base mesh with id: " + std::to_string(instance_info.base_mesh_id));
+                    }
+                    const MeshInfo& base_mesh_info = mesh_info_map.at(instance_info.base_mesh_id);
+
+                    instance_info.base_triangle_index = base_mesh_info.base_triangle_index;
+                    instance_info.triangle_count = base_mesh_info.triangle_count;
+
+                    Mat4f M_local = create_identity_matrix();
+                    if (obj.contains("Transformations")) {
+                        M_local = build_composite_transform(scene, obj.at("Transformations").get<std::string>());
+                    }
+
+                    if (instance_info.reset_transform) {
+                        instance_info.transformation_matrix = M_local;
+                    } else {
+                        instance_info.transformation_matrix = M_local * base_mesh_info.transformation_matrix;
+                    }
+                    
+                    instance_info.inverse_transformation_matrix = mat_inv(instance_info.transformation_matrix);
+                    
+
+                    scene.mesh_data.push_back(instance_info);
+                    mesh_info_map[instance_info.id] = instance_info;
+                };
+                processOneOrMany(objects.at("MeshInstance"), parseMeshInstance);
+            }
+            // GEMINI created code parts
             
             if (objects.contains("Plane")) {
                 auto parsePlane = [&](const json& obj) {
@@ -545,6 +756,13 @@ public:
                            scene.vertex_data__.v_nor_z[i]);
         }
         
+        // GEMINI created code parts
+        scene.transformation_data__.translations.clear();
+        scene.transformation_data__.scalings.clear();
+        scene.transformation_data__.rotations.clear();
+        scene.transformation_data__.composites.clear();
+        // GEMINI created code parts
+        scene.primitive_count = scene.triangle_data__.v0_ind.size()+scene.sphere_data__.sphere_center_vertex_id.size();
         return scene;
     }
 };

@@ -90,22 +90,28 @@ inline Mat4f mat_inv(Mat4f mat1){
     }
     fl inv_det = 1.0f / det;
     Mat4f inv;
+    
+    // M_ij = C_ji
     inv.m11 = inv_det * (mat1.m22 * (mat1.m33 * mat1.m44 - mat1.m34 * mat1.m43) - mat1.m23 * (mat1.m32 * mat1.m44 - mat1.m34 * mat1.m42) + mat1.m24 * (mat1.m32 * mat1.m43 - mat1.m33 * mat1.m42));
-    inv.m12 = inv_det * - (mat1.m21 * (mat1.m33 * mat1.m44 - mat1.m34 * mat1.m43) - mat1.m23 * (mat1.m31 * mat1.m44 - mat1.m34 * mat1.m41) + mat1.m24 * (mat1.m31 * mat1.m43 - mat1.m33 * mat1.m41));
-    inv.m13 = inv_det * (mat1.m21 * (mat1.m32 * mat1.m44 - mat1.m34 * mat1.m42) - mat1.m22 * (mat1.m31 * mat1.m44 - mat1.m34 * mat1.m41) + mat1.m24 * (mat1.m31 * mat1.m42 - mat1.m32 * mat1.m41));
-    inv.m14 = inv_det * - (mat1.m21 * (mat1.m32 * mat1.m43 - mat1.m33 * mat1.m42) - mat1.m22 * (mat1.m31 * mat1.m43 - mat1.m33 * mat1.m41) + mat1.m23 * (mat1.m31 * mat1.m42 - mat1.m32 * mat1.m41));
-    inv.m21 = inv_det * - (mat1.m12 * (mat1.m33 * mat1.m44 - mat1.m34 * mat1.m43) - mat1.m13 * (mat1.m32 * mat1.m44 - mat1.m34 * mat1.m42) + mat1.m14 * (mat1.m32 * mat1.m43 - mat1.m33 * mat1.m42));
+    inv.m21 = inv_det * - (mat1.m21 * (mat1.m33 * mat1.m44 - mat1.m34 * mat1.m43) - mat1.m23 * (mat1.m31 * mat1.m44 - mat1.m34 * mat1.m41) + mat1.m24 * (mat1.m31 * mat1.m43 - mat1.m33 * mat1.m41));
+    inv.m31 = inv_det * (mat1.m21 * (mat1.m32 * mat1.m44 - mat1.m34 * mat1.m42) - mat1.m22 * (mat1.m31 * mat1.m44 - mat1.m34 * mat1.m41) + mat1.m24 * (mat1.m31 * mat1.m42 - mat1.m32 * mat1.m41));
+    inv.m41 = inv_det * - (mat1.m21 * (mat1.m32 * mat1.m43 - mat1.m33 * mat1.m42) - mat1.m22 * (mat1.m31 * mat1.m43 - mat1.m33 * mat1.m41) + mat1.m23 * (mat1.m31 * mat1.m42 - mat1.m32 * mat1.m41));
+    
+    inv.m12 = inv_det * - (mat1.m12 * (mat1.m33 * mat1.m44 - mat1.m34 * mat1.m43) - mat1.m13 * (mat1.m32 * mat1.m44 - mat1.m34 * mat1.m42) + mat1.m14 * (mat1.m32 * mat1.m43 - mat1.m33 * mat1.m42));
     inv.m22 = inv_det * (mat1.m11 * (mat1.m33 * mat1.m44 - mat1.m34 * mat1.m43) - mat1.m13 * (mat1.m31 * mat1.m44 - mat1.m34 * mat1.m41) + mat1.m14 * (mat1.m31 * mat1.m43 - mat1.m33 * mat1.m41));
-    inv.m23 = inv_det * - (mat1.m11 * (mat1.m32 * mat1.m44 - mat1.m34 * mat1.m42) - mat1.m12 * (mat1.m31 * mat1.m44 - mat1.m34 * mat1.m41) + mat1.m14 * (mat1.m31 * mat1.m42 - mat1.m32 * mat1.m41));
-    inv.m24 = inv_det * (mat1.m11 * (mat1.m32 * mat1.m43 - mat1.m33 * mat1.m42) - mat1.m12 * (mat1.m31 * mat1.m43 - mat1.m33 * mat1.m41) + mat1.m13 * (mat1.m31 * mat1.m42 - mat1.m32 * mat1.m41));
-    inv.m31 = inv_det * (mat1.m12 * (mat1.m23 * mat1.m44 - mat1.m24 * mat1.m43) - mat1.m13 * (mat1.m22 * mat1.m44 - mat1.m24 * mat1.m42) + mat1.m14 * (mat1.m22 * mat1.m43 - mat1.m23 * mat1.m42));
-    inv.m32 = inv_det * - (mat1.m11 * (mat1.m23 * mat1.m44 - mat1.m24 * mat1.m43) - mat1.m13 * (mat1.m21 * mat1.m44 - mat1.m24 * mat1.m41) + mat1.m14 * (mat1.m21 * mat1.m43 - mat1.m23 * mat1.m41));
+    inv.m32 = inv_det * - (mat1.m11 * (mat1.m32 * mat1.m44 - mat1.m34 * mat1.m42) - mat1.m12 * (mat1.m31 * mat1.m44 - mat1.m34 * mat1.m41) + mat1.m14 * (mat1.m31 * mat1.m42 - mat1.m32 * mat1.m41));
+    inv.m42 = inv_det * (mat1.m11 * (mat1.m32 * mat1.m43 - mat1.m33 * mat1.m42) - mat1.m12 * (mat1.m31 * mat1.m43 - mat1.m33 * mat1.m41) + mat1.m13 * (mat1.m31 * mat1.m42 - mat1.m32 * mat1.m41));
+    
+    inv.m13 = inv_det * (mat1.m12 * (mat1.m23 * mat1.m44 - mat1.m24 * mat1.m43) - mat1.m13 * (mat1.m22 * mat1.m44 - mat1.m24 * mat1.m42) + mat1.m14 * (mat1.m22 * mat1.m43 - mat1.m23 * mat1.m42));
+    inv.m23 = inv_det * - (mat1.m11 * (mat1.m23 * mat1.m44 - mat1.m24 * mat1.m43) - mat1.m13 * (mat1.m21 * mat1.m44 - mat1.m24 * mat1.m41) + mat1.m14 * (mat1.m21 * mat1.m43 - mat1.m23 * mat1.m41));
     inv.m33 = inv_det * (mat1.m11 * (mat1.m22 * mat1.m44 - mat1.m24 * mat1.m42) - mat1.m12 * (mat1.m21 * mat1.m44 - mat1.m24 * mat1.m41) + mat1.m14 * (mat1.m21 * mat1.m42 - mat1.m22 * mat1.m41));
-    inv.m34 = inv_det * - (mat1.m11 * (mat1.m22 * mat1.m43 - mat1.m23 * mat1.m42) - mat1.m12 * (mat1.m21 * mat1.m43 - mat1.m23 * mat1.m41) + mat1.m13 * (mat1.m21 * mat1.m42 - mat1.m22 * mat1.m41));
-    inv.m41 = inv_det * - (mat1.m12 * (mat1.m23 * mat1.m34 - mat1.m24 * mat1.m33) - mat1.m13 * (mat1.m22 * mat1.m34 - mat1.m24 * mat1.m32) + mat1.m14 * (mat1.m22 * mat1.m33 - mat1.m23 * mat1.m32));
-    inv.m42 = inv_det * (mat1.m11 * (mat1.m23 * mat1.m34 - mat1.m24 * mat1.m33) - mat1.m13 * (mat1.m21 * mat1.m34 - mat1.m24 * mat1.m31) + mat1.m14 * (mat1.m21 * mat1.m33 - mat1.m23 * mat1.m31));
-    inv.m43 = inv_det * - (mat1.m11 * (mat1.m22 * mat1.m34 - mat1.m24 * mat1.m32) - mat1.m12 * (mat1.m21 * mat1.m34 - mat1.m24 * mat1.m31) + mat1.m14 * (mat1.m21 * mat1.m32 - mat1.m22 * mat1.m31));
+    inv.m43 = inv_det * - (mat1.m11 * (mat1.m22 * mat1.m43 - mat1.m23 * mat1.m42) - mat1.m12 * (mat1.m21 * mat1.m43 - mat1.m23 * mat1.m41) + mat1.m13 * (mat1.m21 * mat1.m42 - mat1.m22 * mat1.m41));
+    
+    inv.m14 = inv_det * - (mat1.m12 * (mat1.m23 * mat1.m34 - mat1.m24 * mat1.m33) - mat1.m13 * (mat1.m22 * mat1.m34 - mat1.m24 * mat1.m32) + mat1.m14 * (mat1.m22 * mat1.m33 - mat1.m23 * mat1.m32));
+    inv.m24 = inv_det * (mat1.m11 * (mat1.m23 * mat1.m34 - mat1.m24 * mat1.m33) - mat1.m13 * (mat1.m21 * mat1.m34 - mat1.m24 * mat1.m31) + mat1.m14 * (mat1.m21 * mat1.m33 - mat1.m23 * mat1.m31));
+    inv.m34 = inv_det * - (mat1.m11 * (mat1.m22 * mat1.m34 - mat1.m24 * mat1.m32) - mat1.m12 * (mat1.m21 * mat1.m34 - mat1.m24 * mat1.m31) + mat1.m14 * (mat1.m21 * mat1.m32 - mat1.m22 * mat1.m31));
     inv.m44 = inv_det * (mat1.m11 * (mat1.m22 * mat1.m33 - mat1.m23 * mat1.m32) - mat1.m12 * (mat1.m21 * mat1.m33 - mat1.m23 * mat1.m31) + mat1.m13 * (mat1.m21 * mat1.m32 - mat1.m22 * mat1.m31));
+    
     return inv;
 }
 // GEMINI created code parts

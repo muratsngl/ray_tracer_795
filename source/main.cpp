@@ -43,7 +43,7 @@ int main(int argc, char* argv[]) {
 
     // Measure BVH build time
     auto bvh_start = std::chrono::high_resolution_clock::now();
-    construct_bvh_node(scene);
+    construct_TLAS();
     auto bvh_end = std::chrono::high_resolution_clock::now();
     auto bvh_duration = std::chrono::duration_cast<std::chrono::milliseconds>(bvh_end - bvh_start);
     std::cout << "BVH build time: " << bvh_duration.count() << " ms" << std::endl;
@@ -102,7 +102,8 @@ int main(int argc, char* argv[]) {
                         //return_closest_hit(ray_package,scene,scene.vertex_data__);
                         
                         //shade(ray_package,scene,cb);
-                        intersect_bvh_wrapper(ray_package,scene,0);
+                        intersect_tlas_wrapper(ray_package, scene);
+
                         shade_iterative(ray_package,scene,cb);
                        
                         //implement write caching here(after bvh implementation) 

@@ -14,6 +14,7 @@
 #include "utils.hpp"
 #include "cmath"
 #include "miniply.h"
+#include "bvh_tlas.hpp"
 
 using json = nlohmann::json;
 
@@ -47,7 +48,7 @@ static std::string get_directory(const std::string& path) {
     }
     return "."; // No directory part, use current directory
 }
-// GEMINI created code parts
+
 static Mat4f get_transform_by_id(const Scene& scene, char type, int id) {
     const auto& tf = scene.transformation_data__;
     switch (type) {
@@ -107,7 +108,7 @@ public:
         scene.shadow_ray_epsilon = std::stof(sceneData.contains("ShadowRayEpsilon") ? 
             sceneData.at("ShadowRayEpsilon").get<std::string>() : "1e-3");
         scene.intersection_test_epsilon = std::stof(sceneData.contains("IntersectionTestEpsilon") ? 
-            sceneData.at("IntersectionTestEpsilon").get<std::string>() : "1e-6");
+            sceneData.at("IntersectionTestEpsilon").get<std::string>() : "1e-9");
         
         // **FIXED**: Correctly parse MaxRecursionDepth from a string.
         scene.max_recursion_depth = std::stoi(sceneData.contains("MaxRecursionDepth") ? 
@@ -181,7 +182,7 @@ public:
         if (sceneData.contains("Materials") && sceneData["Materials"].contains("Material")) {
             processOneOrMany(sceneData.at("Materials").at("Material"), parseMaterial);
         }
-        // GEMINI created code parts
+       
         auto parseTranslation = [&](const json& trans) {
             int id = std::stoi(trans.at("_id").get<std::string>());
             Vec3f t = parseVec3f(trans.at("_data").get<std::string>());
@@ -231,7 +232,7 @@ public:
                 processOneOrMany(transforms.at("Composite"),parseComposite);
             }
         }
-        // GEMINI created code parts
+       
         // --- Parse Lights (Generalized) ---
         auto parsePointLight = [&](const json& light) {
             int id = std::stoi(light.at("_id").get<std::string>());
@@ -265,24 +266,15 @@ public:
             
 
         
-        // --- Parse Cameras (Generalized) ---
-            auto parseCamera = [&](const json& cam) {
+        auto parseCamera = [&](const json& cam) {
             Camera camera;
             camera.id = std::stoi(cam.at("_id").get<std::string>());
             camera.image_name = cam.at("ImageName").get<std::string>();
             camera.near_distance = std::stof(cam.at("NearDistance").get<std::string>());
             camera.image_resolution = parseVec2i(cam.at("ImageResolution").get<std::string>());
-            
-            // Handle different camera formats
-            if (cam.contains("NearPlane")) {
-                camera.near_plane = parseVec4f(cam.at("NearPlane").get<std::string>());
-            } else {
-                // Default near plane if not specified
-                camera.near_plane = {-1.0f, 1.0f, -1.0f, 1.0f};
-            }
-            
             camera.position = parseVec3f(cam.at("Position").get<std::string>());
             
+            // --- Gaze Calculation ---
             if (cam.contains("Gaze")) {
                 camera.gaze = parseVec3f(cam.at("Gaze").get<std::string>());
             } else if (cam.contains("GazePoint")) {
@@ -293,24 +285,59 @@ public:
                     gazePoint.y - camera.position.y,
                     gazePoint.z - camera.position.z
                 };
-                // Normalize the gaze vector
-                normalize_on_place(camera.gaze);
-                
             } else {
                 // Default gaze direction
                 camera.gaze = {0.0f, 0.0f, -1.0f};
             }
+            // Normalize Gaze (Gaze / ||Gaze||)
+            normalize_on_place(camera.gaze);
             
+            // --- Up Vector Correction (as per homework spec) ---
+            // This ensures that the final up vector ('v') is perpendicular to the gaze vector ('w').
             camera.up = parseVec3f(cam.at("Up").get<std::string>());
+            
+            Vec3f w = -camera.gaze; // w = -Gaze/||Gaze||
+            Vec3f u = cross(camera.up, w); // u = v0 x w
+            normalize_on_place(u);
+            
+            camera.up = cross(w, u); // v = w x u (this is the new, corrected up vector)
+            // camera.up is now normalized because w and u are orthonormal.
+
+            // --- Near Plane Calculation ---
+            std::string cam_type = cam.contains("_type") ? cam.at("_type").get<std::string>() : "default";
+            
+            if (cam_type == "lookAt") {
+                std::cout<<"LOOKAt"<<std::endl;
+                // Calculate near plane from FovY and Aspect Ratio
+                fl fovY_degrees = std::stof(cam.at("FovY").get<std::string>());
+                fl fovY_rad = fovY_degrees * (M_PI / 180.0f);
+                
+                fl top = camera.near_distance * std::tan(fovY_rad / 2.0f);
+                fl bottom = -top;
+                
+                fl aspect_ratio = (fl)camera.image_resolution.x / (fl)camera.image_resolution.y;
+                fl right = top * aspect_ratio;
+                fl left = -right;
+                
+                // Vec4f { left, right, bottom, top }
+                camera.near_plane = {left, right, bottom, top};
+                
+            } else if (cam.contains("NearPlane")) {
+                // Handle non-lookAt cameras that specify a plane
+                camera.near_plane = parseVec4f(cam.at("NearPlane").get<std::string>());
+            } else {
+                // Default near plane if not specified (and not lookAt)
+                camera.near_plane = {-1.0f, 1.0f, -1.0f, 1.0f};
+            }
+
             scene.cameras.push_back(camera);
         };
         if (sceneData.contains("Cameras") && sceneData["Cameras"].contains("Camera")) {
             processOneOrMany(sceneData.at("Cameras").at("Camera"), parseCamera);
         }
-        
-        // GEMINI created code parts
+       
         std::map<int, MeshInfo> mesh_info_map; 
-        // GEMINI created code parts
+       
 
         // --- Parse Objects (Generalized) ---
         if (sceneData.contains("Objects")) {
@@ -318,19 +345,53 @@ public:
 
             if (objects.contains("Sphere")) {
                 auto parseSphere = [&](const json& obj) {
+                    BLAS blas;
                     int id = std::stoi(obj.at("_id").get<std::string>());
                     int material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
                     int center_vertex_id = std::stoi(obj.at("Center").get<std::string>()) - 1;
                     fl radius = std::stof(obj.at("Radius").get<std::string>());
                     
-                    scene.prim_data__.prim_index.push_back(scene.sphere_data__.sphere_id.size());
+                    int sphere_index = scene.sphere_data__.sphere_id.size();
+                    
+                    scene.prim_data__.prim_index.push_back(sphere_index);
                     scene.prim_data__.primitive_type.push_back(SPHERE);
                     // Directly populate SoA structure
                     scene.sphere_data__.sphere_id.push_back(id);
                     scene.sphere_data__.sphere_mat_id.push_back(material_id);
                     scene.sphere_data__.sphere_center_vertex_id.push_back(center_vertex_id);
                     scene.sphere_data__.sphere_radius_sq.push_back(radius*radius);
-                
+                    
+                    // Parse transformations if they exist
+                    Mat4f transformation_matrix = create_identity_matrix();
+                    if (obj.contains("Transformations")) {
+                        transformation_matrix = build_composite_transform(scene, obj.at("Transformations").get<std::string>());
+                    }
+                    
+                    // Create BLAS for this sphere
+                    // Get sphere center position (untransformed)
+                    fl center_x = scene.vertex_data__.v_pos_x[center_vertex_id];
+                    fl center_y = scene.vertex_data__.v_pos_y[center_vertex_id];
+                    fl center_z = scene.vertex_data__.v_pos_z[center_vertex_id];
+                    
+                    // Create AABB for sphere in local space (unit sphere at center)
+                    AABB local_bbox;
+                    local_bbox.bbox_xmin = center_x - radius;
+                    local_bbox.bbox_ymin = center_y - radius;
+                    local_bbox.bbox_zmin = center_z - radius;
+                    local_bbox.bbox_xmax = center_x + radius;
+                    local_bbox.bbox_ymax = center_y + radius;
+                    local_bbox.bbox_zmax = center_z + radius;
+                    
+                    // Transform the AABB to world space
+                    blas.bbox = transform_aabb(local_bbox, transformation_matrix);
+                    
+                    // Store transforms for sphere
+                    blas.transformation_matrix = transformation_matrix;
+                    blas.inv_transform = mat_inv(transformation_matrix);
+                    blas.material_id = material_id;
+                    blas.bvh_index = 10000 + sphere_index; // Magic number for sphere identification
+                    
+                    blas_list.push_back(blas);
                 };
                 processOneOrMany(objects.at("Sphere"), parseSphere);
             }
@@ -402,8 +463,10 @@ public:
             //HW2: Parse Mesh - push the data exactly as before, create a mesh info instance which will hold info required for instancing such as id and base triangle index.
             if (objects.contains("Mesh")) {
                 auto parseMesh = [&](const json& obj) {
-                    // GEMINI created code parts
+                    BVH bvh;
+                    BLAS blas;
                     MeshInfo mesh_info;
+                    mesh_info.bvh_index = bvh_list.size();
                     mesh_info.id = std::stoi(obj.at("_id").get<std::string>());
                     mesh_info.material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
                     mesh_info.base_mesh_id = -1; // This is a base mesh
@@ -423,7 +486,7 @@ public:
                     
                     int mesh_id = mesh_info.id;
                     int material_id = mesh_info.material_id;
-                    // GEMINI created code parts
+                   
                     
                     if (obj.contains("_shadingMode") && obj.at("_shadingMode").get<std::string>() == "smooth") {
                         G_SMOOTH_SHADING_ENABLED = true;
@@ -561,7 +624,7 @@ public:
                                     scene.prim_data__.prim_index.push_back(scene.triangle_data__.v0_ind.size());
                                     scene.prim_data__.primitive_type.push_back(TRIANGLE);
                                     
-
+                                    bvh.prim_indices.push_back(scene.triangle_data__.v0_ind.size());
                                     scene.triangle_data__.v0_ind.push_back(index_v0);
                                     scene.triangle_data__.v1_ind.push_back(index_v1);
                                     scene.triangle_data__.v2_ind.push_back(index_v2);
@@ -570,7 +633,7 @@ public:
                                     scene.triangle_data__.tri_norm_z.push_back(norm_z);
                                     scene.triangle_data__.triangle_id.push_back(mesh_id * 1000000 + triangle_counter);
                                     scene.triangle_data__.triangle_material_id.push_back(material_id);
-
+                                    
                                     scene.triangle_data__.tri_centro_y.push_back(centro_y);
 
                                     scene.triangle_data__.tri_centro_z.push_back(centro_z);
@@ -644,7 +707,8 @@ public:
                                 
                                 scene.prim_data__.prim_index.push_back(scene.triangle_data__.v0_ind.size());
                                 scene.prim_data__.primitive_type.push_back(TRIANGLE);
-
+                                
+                                bvh.prim_indices.push_back(scene.triangle_data__.v0_ind.size());
                                 scene.triangle_data__.v0_ind.push_back(index_v0);
                                 scene.triangle_data__.v1_ind.push_back(index_v1);
                                 scene.triangle_data__.v2_ind.push_back(index_v2);
@@ -678,19 +742,23 @@ public:
                             }
                         }
                     }
-                    // GEMINI created code parts
+                   
                     int end_triangle_count = scene.triangle_data__.v0_ind.size();
                     mesh_info.triangle_count = end_triangle_count - start_triangle_count;
                     
                     scene.mesh_data.push_back(mesh_info);
                     mesh_info_map[mesh_info.id] = mesh_info;
-                    // GEMINI created code parts
+                    construct_BVH(mesh_info,bvh,scene);
+                    bvh_list.push_back(bvh);
+                    construct_BLAS(mesh_info,blas,scene);
+                    blas_list.push_back(blas);
                 };
                 processOneOrMany(objects.at("Mesh"), parseMesh);
             }
-            // GEMINI created code parts
+           
             if (objects.contains("MeshInstance")) {
                 auto parseMeshInstance = [&](const json& obj) {
+                    BLAS blas;
                     MeshInfo instance_info;
                     instance_info.id = std::stoi(obj.at("_id").get<std::string>());
                     instance_info.material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
@@ -705,6 +773,7 @@ public:
 
                     instance_info.base_triangle_index = base_mesh_info.base_triangle_index;
                     instance_info.triangle_count = base_mesh_info.triangle_count;
+                    instance_info.bvh_index = base_mesh_info.bvh_index;
 
                     Mat4f M_local = create_identity_matrix();
                     if (obj.contains("Transformations")) {
@@ -722,10 +791,13 @@ public:
 
                     scene.mesh_data.push_back(instance_info);
                     mesh_info_map[instance_info.id] = instance_info;
+                    construct_BLAS(instance_info,blas,scene);
+                    blas_list.push_back(blas);
+                    
                 };
                 processOneOrMany(objects.at("MeshInstance"), parseMeshInstance);
             }
-            // GEMINI created code parts
+           
             
             if (objects.contains("Plane")) {
                 auto parsePlane = [&](const json& obj) {
@@ -756,12 +828,12 @@ public:
                            scene.vertex_data__.v_nor_z[i]);
         }
         
-        // GEMINI created code parts
+       
         scene.transformation_data__.translations.clear();
         scene.transformation_data__.scalings.clear();
         scene.transformation_data__.rotations.clear();
         scene.transformation_data__.composites.clear();
-        // GEMINI created code parts
+       
         scene.primitive_count = scene.triangle_data__.v0_ind.size()+scene.sphere_data__.sphere_center_vertex_id.size();
         return scene;
     }

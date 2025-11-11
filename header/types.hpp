@@ -2,9 +2,9 @@
 
 #include <vector>
 #include <string>
-// GEMINI created code parts
+
 #include <map>
-// GEMINI created code parts
+
 
 
 //global state
@@ -244,26 +244,26 @@ struct PlaneData{
     
 };
 struct TransformationData{
-    // GEMINI created code parts
+    
     std::map<int, Mat4f> translations;
     std::map<int, Mat4f> scalings;
     std::map<int, Mat4f> rotations;
     std::map<int, Mat4f> composites;
-    // GEMINI created code parts
+    
 };
 struct MeshInfo{
     Mat4f transformation_matrix;
-    // GEMINI created code parts
+    
     Mat4f inverse_transformation_matrix;
   
-    // GEMINI created code parts
+    
     int id;
     int base_mesh_id;
     int base_triangle_index = -1;
     int triangle_count = 0;
     int material_id;
     //will be transcended by the first mesh
-    int bvh_id=-1;
+    int bvh_index=-1;
     bool reset_transform=false;
 };
 
@@ -283,9 +283,9 @@ struct Scene {
     PrimitiveData prim_data__;
     
     
-    // GEMINI created code parts
+    
     std::vector<MeshInfo> mesh_data;
-    // GEMINI created code parts
+    
     
     std::vector<Camera> cameras;
     std::vector<Material> materials;
@@ -306,22 +306,36 @@ struct BVHNode{
     int first_prim,prim_count;
 };
 
-struct TLASnode{
-    AABB bbox;
-    int leftBlas;
-};
-
-
-struct TLAS{
-
-};
-
-
 struct BVH{
-    BVHNode* root;
+    BVHNode* bvh_node_list;
     std::vector<int> prim_indices;
-    PrimType type;
+    int next_node=1;
 };
 
+
+struct BLAS{
+    AABB bbox;
+    Mat4f inv_transform;
+    Mat4f transformation_matrix;
+    int material_id;
+    //this also can denote the sphere index as we have a single blas struct for both mesh instance and the spheres
+    int bvh_index;
+};
+
+struct TLASNode{
+    AABB bbox;
+    int left_child_index;
+    int blas_id_0=-1,blas_id_1=-1;
+};
+//ONLY ONE WILL EXIST
+//NO NEED FOR THE PRIMITIVE LIST AS THIS COVERS ALL OF THE BLASSES;
+struct TLAS{
+    TLASNode* tlas_root;
+    int next_node;
+
+
+};
+
+//Structure for tlas blas: blas array. one tlas tree. many tlas nodes.
 
 

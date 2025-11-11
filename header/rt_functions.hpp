@@ -88,96 +88,7 @@ void inline intersect_planes(const f_batch& dir_x,
     mat_id = xs::select(int_mask, plane_mat_id_batch, mat_id);
 }
 
-void inline intersect_spheres(
-    const f_batch& dir_x,
-    const f_batch& dir_y,
-    const f_batch& dir_z,
-    const f_batch& orig_x,
-    const f_batch& orig_y,
-    const f_batch& orig_z,
-    f_batch& t_min,
-    i_batch& mat_id,
-    // Add normal output batches
-    f_batch& norm_x_out,
-    f_batch& norm_y_out,
-    f_batch& norm_z_out,
-    const SphereData& spheres, const VertexData& vertices, const Scene& scene, const int Sphere_ID) {
 
-    int center_vertex_id = spheres.sphere_center_vertex_id[Sphere_ID];
-    auto sphere_center_x = xs::broadcast(vertices.v_pos_x[center_vertex_id]);
-    auto sphere_center_y = xs::broadcast(vertices.v_pos_y[center_vertex_id]);
-    auto sphere_center_z = xs::broadcast(vertices.v_pos_z[center_vertex_id]);
-    auto sphere_radius_sq = xs::broadcast(spheres.sphere_radius_sq[Sphere_ID]);
-
-    auto oc_x = orig_x - sphere_center_x;
-    auto oc_y = orig_y - sphere_center_y;
-    auto oc_z = orig_z - sphere_center_z;
-
-    auto b_half = (dir_x * oc_x) + (dir_y * oc_y) + (dir_z * oc_z);
-
-    auto c = (oc_x * oc_x) + (oc_y * oc_y) + (oc_z * oc_z) - sphere_radius_sq;
-
-    auto discriminant = (b_half * b_half) - c;
-
-    b_batch hit_mask = (discriminant >= 0.f);
-
-    if (xs::none(hit_mask)) {
-        return;
-    }
-
-    auto sqrt_discriminant = xs::sqrt(discriminant);
-
-    auto t0 = -b_half - sqrt_discriminant;
-    auto t1 = -b_half + sqrt_discriminant;
-
-    auto t_smaller = xs::min(t0, t1);
-    auto t_larger = xs::max(t0, t1);
-
-    const fl epsilon = scene.intersection_test_epsilon;
-
-    auto t_new = xs::select(t_smaller > epsilon, t_smaller, t_larger);
-
-    b_batch final_hit_mask = hit_mask & (t_new > epsilon) & (t_new < t_min);
-
-    if (xs::none(final_hit_mask)) {
-        return;
-    }
-
-    // --- Update Hit Information ---
-    
-    // 1. Calculate hit point: P = O + t*D
-    auto hit_x = orig_x + t_new * dir_x;
-    auto hit_y = orig_y + t_new * dir_y;
-    auto hit_z = orig_z + t_new * dir_z;
-
-    // 2. Calculate normal: N = (P - C) / R
-    auto n_x = hit_x - sphere_center_x;
-    auto n_y = hit_y - sphere_center_y;
-    auto n_z = hit_z - sphere_center_z;
-
-    // 3. Normalize
-    auto radius = xs::sqrt(sphere_radius_sq);
-    f_batch epsilon_batch(1e-8f);
-    b_batch radius_valid = (radius > epsilon_batch);
-    auto inv_radius = xs::select(radius_valid, 1.0f / radius, f_batch(0.0f));
-    
-    auto new_norm_x = n_x * inv_radius;
-    auto new_norm_y = n_y * inv_radius;
-    auto new_norm_z = n_z * inv_radius;
-
-    // 4. Conditionally store the new normal
-    norm_x_out = xs::select(final_hit_mask, new_norm_x, norm_x_out);
-    norm_y_out = xs::select(final_hit_mask, new_norm_y, norm_y_out);
-    norm_z_out = xs::select(final_hit_mask, new_norm_z, norm_z_out);
-
-    // 5. Update t_min
-    t_min = xs::select(final_hit_mask, t_new, t_min);
-
-    // 6. Update material ID
-    auto int_mask = xs::batch_bool_cast<int32_t>(final_hit_mask);
-    i_batch sphere_id_batch = xs::broadcast(spheres.sphere_mat_id[Sphere_ID]);
-    mat_id = xs::select(int_mask, sphere_id_batch, mat_id);
-}
 
 void inline intersect_triangles(
     const f_batch& dir_x,
@@ -426,7 +337,7 @@ void inline intersect_spheres_masked(
     f_batch& norm_y_out,
     f_batch& norm_z_out,
     const SphereData& spheres, const VertexData& vertices, const Scene& scene, const int Sphere_ID,
-    const b_batch& active_mask) { // New parameter
+    const b_batch& active_mask) {
 
     // 1. Early exit if no rays in this packet are active
     if (xs::none(active_mask)) {
@@ -443,11 +354,21 @@ void inline intersect_spheres_masked(
     auto oc_y = orig_y - sphere_center_y;
     auto oc_z = orig_z - sphere_center_z;
 
+    // --- Setup for quadratic equation: At^2 + 2bt + C = 0 ---
+    
+    // A = D · D (Dot product of direction vector)
+    auto a = (dir_x * dir_x) + (dir_y * dir_y) + (dir_z * dir_z);
+    
+    // b = D · (O - C) (Half of the B term)
     auto b_half = (dir_x * oc_x) + (dir_y * oc_y) + (dir_z * oc_z);
 
+    // C = (O - C) · (O - C) - r^2
     auto c = (oc_x * oc_x) + (oc_y * oc_y) + (oc_z * oc_z) - sphere_radius_sq;
 
-    auto discriminant = (b_half * b_half) - c;
+    // --- FIX: Correct discriminant calculation ---
+    // The discriminant is b^2 - AC
+    auto discriminant = (b_half * b_half) - (a * c);
+    // --- END FIX ---
 
     // 2. Combine incoming mask with discriminant check
     b_batch discriminant_mask = (discriminant >= 0.f);
@@ -459,8 +380,12 @@ void inline intersect_spheres_masked(
 
     auto sqrt_discriminant = xs::sqrt(discriminant);
 
-    auto t0 = -b_half - sqrt_discriminant;
-    auto t1 = -b_half + sqrt_discriminant;
+    // Calculate t = (-b ± sqrt(discriminant)) / A
+    b_batch valid_a = (xs::abs(a) > 1e-8f);
+    auto inv_a = xs::select(valid_a, 1.0f / a, f_batch(0.0f));
+
+    auto t0 = (-b_half - sqrt_discriminant) * inv_a;
+    auto t1 = (-b_half + sqrt_discriminant) * inv_a;
 
     auto t_smaller = xs::min(t0, t1);
     auto t_larger = xs::max(t0, t1);
@@ -483,12 +408,12 @@ void inline intersect_spheres_masked(
     auto hit_y = orig_y + t_new * dir_y;
     auto hit_z = orig_z + t_new * dir_z;
 
-    // 2. Calculate normal: N = (P - C) / R
+    // 2. Calculate normal: N_unnormalized = P - C
     auto n_x = hit_x - sphere_center_x;
     auto n_y = hit_y - sphere_center_y;
     auto n_z = hit_z - sphere_center_z;
 
-    // 3. Normalize
+    // 3. Normalize: N = N_unnormalized / R
     auto radius = xs::sqrt(sphere_radius_sq);
     f_batch epsilon_batch(1e-8f);
     b_batch radius_valid = (radius > epsilon_batch);
@@ -901,12 +826,15 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
             if(blas.bvh_index >= 10000) {
                 // This is a SPHERE
                 int sphere_index = blas.bvh_index - 10000;
-                intersect_spheres_masked(local_d_x, local_d_y, local_d_z,
-                                        local_o_x, local_o_y, local_o_z,
-                                        local_t_min, local_mat_id,
-                                        local_norm_x, local_norm_y, local_norm_z,
-                                        scene.sphere_data__, scene.vertex_data__, scene,
-                                        sphere_index, active_mask);
+              
+
+                intersect_spheres_masked(
+                    local_o_x, local_o_y, local_o_z,     // <-- FIX 2: Correct Origin
+                    local_d_x, local_d_y, local_d_z,     // <-- FIX 2: Correct Direction
+                    local_t_min,local_mat_id,                // <-- FIX 3: Correct mat_id output
+                    local_norm_x, local_norm_y, local_norm_z,
+                    scene.sphere_data__, scene.vertex_data__, scene,
+                    sphere_index, active_mask);
             } else {
                 // This is a MESH - Traverse the BVH
                 // Pass blas.material_id as override to all triangles in this BLAS
@@ -968,12 +896,15 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
             if(blas.bvh_index >= 10000) {
                 // This is a SPHERE
                 int sphere_index = blas.bvh_index - 10000;
-                intersect_spheres_masked(local_d_x, local_d_y, local_d_z,
-                                        local_o_x, local_o_y, local_o_z,
-                                        local_t_min, local_mat_id,
-                                        local_norm_x, local_norm_y, local_norm_z,
-                                        scene.sphere_data__, scene.vertex_data__, scene,
-                                        sphere_index, active_mask);
+              
+
+            intersect_spheres_masked(
+                local_o_x, local_o_y, local_o_z,     // <-- FIX 2: Correct Origin
+                local_d_x, local_d_y, local_d_z,     // <-- FIX 2: Correct Direction
+                local_t_min, local_mat_id,                // <-- FIX 3: Correct mat_id output
+                local_norm_x, local_norm_y, local_norm_z,
+                scene.sphere_data__, scene.vertex_data__, scene,
+                sphere_index, active_mask);
             } else {
                 // This is a MESH - Traverse the BVH
                 intersect_bvh(local_o_x, local_o_y, local_o_z,
@@ -1097,23 +1028,46 @@ void inline intersect_sphere_any_hit(const f_batch& orig_x, const f_batch& orig_
     auto oc_x = orig_x - sphere_center_x;
     auto oc_y = orig_y - sphere_center_y;
     auto oc_z = orig_z - sphere_center_z;
-
+    
+    // --- Setup for quadratic equation: At^2 + 2bt + C = 0 ---
+    
+    // A = D · D
+    auto a = (dir_x * dir_x) + (dir_y * dir_y) + (dir_z * dir_z);
+    
+    // b = D · (O - C)
     auto b_half = (dir_x * oc_x) + (dir_y * oc_y) + (dir_z * oc_z);
+    
+    // C = (O - C) · (O - C) - r^2
     auto c = (oc_x * oc_x) + (oc_y * oc_y) + (oc_z * oc_z) - sphere_radius_sq;
-    auto discriminant = (b_half * b_half) - c;
+    
+    // Discriminant = b^2 - AC
+    auto discriminant = (b_half * b_half) - (a * c); // Fixed syntax error from original
 
     b_batch hit_mask = (discriminant >= 0.f);
-    if (xs::none(hit_mask & active_mask)) return;
+    b_batch active_hit_mask = active_mask & hit_mask; // Combine masks
+    
+    if (xs::none(active_hit_mask)) return;
 
     auto sqrt_discriminant = xs::sqrt(discriminant);
-    auto t0 = -b_half - sqrt_discriminant;
-    auto t1 = -b_half + sqrt_discriminant;
+
+    // --- FIX: Divide by 'a' to get correct 't' values ---
+    // The solution for t is (-b ± sqrt(discriminant)) / A
+    b_batch valid_a = (xs::abs(a) > 1e-8f);
+    auto inv_a = xs::select(valid_a, 1.0f / a, f_batch(0.0f));
+
+    auto t0 = (-b_half - sqrt_discriminant) * inv_a; // <-- MODIFIED
+    auto t1 = (-b_half + sqrt_discriminant) * inv_a; // <-- MODIFIED
+    // --- END FIX ---
+
     auto t_smaller = xs::min(t0, t1);
     auto t_larger = xs::max(t0, t1);
+
+    // Find the earliest valid hit (t_new > epsilon)
     auto t_new = xs::select(t_smaller > epsilon, t_smaller, t_larger);
 
     // Mark rays as occluded if they hit between epsilon and t_max
-    b_batch new_occlusion = active_mask & hit_mask & (t_new > epsilon) & (t_new < t_max);
+    // Only check rays that were part of the active_hit_mask
+    b_batch new_occlusion = active_hit_mask & (t_new > epsilon) & (t_new < t_max);
     is_occluded = is_occluded | new_occlusion;
 }
 

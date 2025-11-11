@@ -373,7 +373,9 @@ public:
                     fl center_y = scene.vertex_data__.v_pos_y[center_vertex_id];
                     fl center_z = scene.vertex_data__.v_pos_z[center_vertex_id];
                     
-                    // Create AABB for sphere in local space (unit sphere at center)
+                    
+                    
+                    // Create AABB for sphere in local space with scaled radius
                     AABB local_bbox;
                     local_bbox.bbox_xmin = center_x - radius;
                     local_bbox.bbox_ymin = center_y - radius;

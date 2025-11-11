@@ -113,11 +113,16 @@ void inline intersect_spheres(
     auto oc_y = orig_y - sphere_center_y;
     auto oc_z = orig_z - sphere_center_z;
 
+    // --- FIX: Handle non-normalized rays ---
+    // A = D · D
+    auto a = (dir_x * dir_x) + (dir_y * dir_y) + (dir_z * dir_z);
+    // b = D · (O - C)
     auto b_half = (dir_x * oc_x) + (dir_y * oc_y) + (dir_z * oc_z);
-
+    // C = (O - C) · (O - C) - r^2
     auto c = (oc_x * oc_x) + (oc_y * oc_y) + (oc_z * oc_z) - sphere_radius_sq;
-
-    auto discriminant = (b_half * b_half) - c;
+    // Discriminant = b^2 - AC
+    auto discriminant = (b_half * b_half) - (a * c);
+    // --- END FIX ---
 
     b_batch hit_mask = (discriminant >= 0.f);
 
@@ -127,8 +132,12 @@ void inline intersect_spheres(
 
     auto sqrt_discriminant = xs::sqrt(discriminant);
 
-    auto t0 = -b_half - sqrt_discriminant;
-    auto t1 = -b_half + sqrt_discriminant;
+    // --- FIX: Divide by 'a' ---
+    b_batch valid_a = (xs::abs(a) > 1e-8f);
+    auto inv_a = xs::select(valid_a, 1.0f / a, f_batch(0.0f));
+    auto t0 = (-b_half - sqrt_discriminant) * inv_a;
+    auto t1 = (-b_half + sqrt_discriminant) * inv_a;
+    // --- END FIX ---
 
     auto t_smaller = xs::min(t0, t1);
     auto t_larger = xs::max(t0, t1);
@@ -350,6 +359,9 @@ void inline intersect_planes_masked(const f_batch& dir_x,
     f_batch& norm_x_out,
     f_batch& norm_y_out,
     f_batch& norm_z_out,
+    f_batch& hit_pos_x,
+    f_batch& hit_pos_y,
+    f_batch& hit_pos_z,
     const PlaneData& planes, const VertexData& vertices, const Scene& scene, int plane_ID,
     const b_batch& active_mask) { // New parameter
 
@@ -399,15 +411,25 @@ void inline intersect_planes_masked(const f_batch& dir_x,
 
     // --- Update Hit Information ---
 
-    // 8. Update normals
+    // 8. Calculate hit position: P = O + t*D
+    f_batch new_hit_x = orig_x + t_new * dir_x;
+    f_batch new_hit_y = orig_y + t_new * dir_y;
+    f_batch new_hit_z = orig_z + t_new * dir_z;
+
+    // 9. Update hit positions
+    hit_pos_x = xs::select(final_hit_mask, new_hit_x, hit_pos_x);
+    hit_pos_y = xs::select(final_hit_mask, new_hit_y, hit_pos_y);
+    hit_pos_z = xs::select(final_hit_mask, new_hit_z, hit_pos_z);
+
+    // 10. Update normals
     norm_x_out = xs::select(final_hit_mask, norm_x, norm_x_out);
     norm_y_out = xs::select(final_hit_mask, norm_y, norm_y_out);
     norm_z_out = xs::select(final_hit_mask, norm_z, norm_z_out);
 
-    // 9. Update t_min
+    // 11. Update t_min
     t_min = xs::select(final_hit_mask, t_new, t_min);
 
-    // 10. Update material ID
+    // 12. Update material ID
     auto int_mask = xs::batch_bool_cast<int32_t>(final_hit_mask);
     i_batch plane_mat_id_batch = xs::broadcast(planes.plane_material_id[plane_ID]);
     mat_id = xs::select(int_mask, plane_mat_id_batch, mat_id);
@@ -443,11 +465,16 @@ void inline intersect_spheres_masked(
     auto oc_y = orig_y - sphere_center_y;
     auto oc_z = orig_z - sphere_center_z;
 
+    // --- FIX: Handle non-normalized rays ---
+    // A = D · D
+    auto a = (dir_x * dir_x) + (dir_y * dir_y) + (dir_z * dir_z);
+    // b = D · (O - C)
     auto b_half = (dir_x * oc_x) + (dir_y * oc_y) + (dir_z * oc_z);
-
+    // C = (O - C) · (O - C) - r^2
     auto c = (oc_x * oc_x) + (oc_y * oc_y) + (oc_z * oc_z) - sphere_radius_sq;
-
-    auto discriminant = (b_half * b_half) - c;
+    // Discriminant = b^2 - AC
+    auto discriminant = (b_half * b_half) - (a * c);
+    // --- END FIX ---
 
     // 2. Combine incoming mask with discriminant check
     b_batch discriminant_mask = (discriminant >= 0.f);
@@ -459,8 +486,12 @@ void inline intersect_spheres_masked(
 
     auto sqrt_discriminant = xs::sqrt(discriminant);
 
-    auto t0 = -b_half - sqrt_discriminant;
-    auto t1 = -b_half + sqrt_discriminant;
+    // --- FIX: Divide by 'a' ---
+    b_batch valid_a = (xs::abs(a) > 1e-8f);
+    auto inv_a = xs::select(valid_a, 1.0f / a, f_batch(0.0f));
+    auto t0 = (-b_half - sqrt_discriminant) * inv_a;
+    auto t1 = (-b_half + sqrt_discriminant) * inv_a;
+    // --- END FIX ---
 
     auto t_smaller = xs::min(t0, t1);
     auto t_larger = xs::max(t0, t1);
@@ -1061,12 +1092,22 @@ void intersect_tlas_wrapper(RP8& ray_pack, const Scene& scene) {
     // 6. Start with all rays active
     b_batch active_mask = true;
 
+   
+    
     // 7. Traverse TLAS starting from root (node 0)
     intersect_tlas(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z,
                    t_min, mat_id, norm_x, norm_y, norm_z,
                    hit_pos_x, hit_pos_y, hit_pos_z,
                    scene, 0, active_mask);
-
+    
+    // 7.5. Test all planes for closest-hit
+     for(int i = 0; i < scene.plane_data__.plane_id.size(); i++){
+        intersect_planes_masked(dir_x, dir_y, dir_z, orig_x, orig_y, orig_z,
+                               t_min, mat_id, norm_x, norm_y, norm_z,
+                               hit_pos_x, hit_pos_y, hit_pos_z,
+                               scene.plane_data__, scene.vertex_data__, scene, i, active_mask);
+    }
+    
     // 8. Store the final results back into the ray packet
     xs::store(&ray_pack.t_min[0], t_min);
     xs::store(&ray_pack.mat_id[0], mat_id);
@@ -1076,6 +1117,50 @@ void intersect_tlas_wrapper(RP8& ray_pack, const Scene& scene) {
     xs::store(&ray_pack.hit_pos_x[0], hit_pos_x);
     xs::store(&ray_pack.hit_pos_y[0], hit_pos_y);
     xs::store(&ray_pack.hit_pos_z[0], hit_pos_z);
+}
+
+// --- PLANE ANY-HIT (FOR SHADOWS) ---
+
+void inline intersect_planes_any_hit(const f_batch& orig_x, const f_batch& orig_y, const f_batch& orig_z,
+                                     const f_batch& dir_x, const f_batch& dir_y, const f_batch& dir_z,
+                                     const f_batch& t_max, b_batch& is_occluded,
+                                     const Scene& scene, const int plane_index,
+                                     b_batch active_mask, const fl epsilon) {
+    
+    if(xs::none(active_mask)) return;
+    
+    // Get plane data (normal N, point P0)
+    auto norm_x = xs::broadcast(scene.plane_data__.plane_norm_x[plane_index]);
+    auto norm_y = xs::broadcast(scene.plane_data__.plane_norm_y[plane_index]);
+    auto norm_z = xs::broadcast(scene.plane_data__.plane_norm_z[plane_index]);
+
+    int p_v_id = scene.plane_data__.plane_point_vertex_id[plane_index];
+    auto p0_x = xs::broadcast(scene.vertex_data__.v_pos_x[p_v_id]);
+    auto p0_y = xs::broadcast(scene.vertex_data__.v_pos_y[p_v_id]);
+    auto p0_z = xs::broadcast(scene.vertex_data__.v_pos_z[p_v_id]);
+
+    // Calculate denominator: denom = dot(RayDirection, PlaneNormal)
+    auto denom = (dir_x * norm_x) + (dir_y * norm_y) + (dir_z * norm_z);
+
+    // Epsilon check for parallel rays
+    b_batch parallel_mask = (xs::abs(denom) > epsilon);
+    b_batch plane_active_mask = active_mask & parallel_mask;
+
+    if (xs::none(plane_active_mask)) return;
+
+    // Calculate numerator: numer = dot(PlanePoint - RayOrigin, PlaneNormal)
+    auto p0_minus_o_x = p0_x - orig_x;
+    auto p0_minus_o_y = p0_y - orig_y;
+    auto p0_minus_o_z = p0_z - orig_z;
+
+    auto numer = (p0_minus_o_x * norm_x) + (p0_minus_o_y * norm_y) + (p0_minus_o_z * norm_z);
+
+    // Calculate t = numer / denom
+    auto t_new = numer / denom;
+
+    // Mark rays as occluded if they hit between epsilon and t_max
+    b_batch new_occlusion = plane_active_mask & (t_new > epsilon) & (t_new < t_max);
+    is_occluded = is_occluded | new_occlusion;
 }
 
 // --- SPHERE ANY-HIT (FOR SHADOWS) ---
@@ -1098,22 +1183,37 @@ void inline intersect_sphere_any_hit(const f_batch& orig_x, const f_batch& orig_
     auto oc_y = orig_y - sphere_center_y;
     auto oc_z = orig_z - sphere_center_z;
 
+    // --- FIX: Handle non-normalized rays ---
+    // A = D · D
+    auto a = (dir_x * dir_x) + (dir_y * dir_y) + (dir_z * dir_z);
+    // b = D · (O - C)
     auto b_half = (dir_x * oc_x) + (dir_y * oc_y) + (dir_z * oc_z);
+    // C = (O - C) · (O - C) - r^2
     auto c = (oc_x * oc_x) + (oc_y * oc_y) + (oc_z * oc_z) - sphere_radius_sq;
-    auto discriminant = (b_half * b_half) - c;
+    // Discriminant = b^2 - AC
+    auto discriminant = (b_half * b_half) - (a * c);
+    // --- END FIX ---
 
     b_batch hit_mask = (discriminant >= 0.f);
-    if (xs::none(hit_mask & active_mask)) return;
+    b_batch active_hit_mask = active_mask & hit_mask; // Combine masks
+    
+    if (xs::none(active_hit_mask)) return;
 
     auto sqrt_discriminant = xs::sqrt(discriminant);
-    auto t0 = -b_half - sqrt_discriminant;
-    auto t1 = -b_half + sqrt_discriminant;
+
+    // --- FIX: Divide by 'a' ---
+    b_batch valid_a = (xs::abs(a) > 1e-8f);
+    auto inv_a = xs::select(valid_a, 1.0f / a, f_batch(0.0f));
+    auto t0 = (-b_half - sqrt_discriminant) * inv_a;
+    auto t1 = (-b_half + sqrt_discriminant) * inv_a;
+    // --- END FIX ---
+    
     auto t_smaller = xs::min(t0, t1);
     auto t_larger = xs::max(t0, t1);
     auto t_new = xs::select(t_smaller > epsilon, t_smaller, t_larger);
 
     // Mark rays as occluded if they hit between epsilon and t_max
-    b_batch new_occlusion = active_mask & hit_mask & (t_new > epsilon) & (t_new < t_max);
+    b_batch new_occlusion = active_hit_mask & (t_new > epsilon) & (t_new < t_max);
     is_occluded = is_occluded | new_occlusion;
 }
 
@@ -1265,6 +1365,7 @@ void inline intersect_tlas_any_hit(const f_batch& orig_x, const f_batch& orig_y,
                                       active_mask, epsilon);
             }
             
+            
             // Update active_mask
             active_mask = active_mask & !is_occluded;
             if(xs::none(active_mask)) return; // All rays occluded, stop.
@@ -1349,11 +1450,20 @@ void inline intersect_tlas_any_hit_wrapper(RP8& ray_pack, const Scene& scene,
     // Start with no rays occluded
     is_occluded = false;
 
+
+    
     // Traverse TLAS
     intersect_tlas_any_hit(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z,
                            t_max, is_occluded, scene, 0, // 0 = root node
                            active_mask, epsilon);
-    
+
+    // Test all planes for occlusion
+           for(int i = 0; i < scene.plane_data__.plane_id.size(); i++){
+       intersect_planes_any_hit(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z,
+                                t_max, is_occluded, scene, i, active_mask, epsilon);
+      
+    }
+ 
     // Final mask: a ray is in light if it was active AND not occluded.
     // The shader will use '!is_occluded'
 }

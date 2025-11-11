@@ -1432,6 +1432,7 @@ void inline shade_iterative(RP8& ray_pack, const Scene& scene, ColorBlock& color
                                 // Apply Attenuation using Beer's Law (e^-cx)
                                 fl distance_inside = ray_pack.t_min[i]; // t_min from tracing *inside*
                                 Vec3f C = mat.absorption_coefficient; // c from Beer's Law
+                                
                                 if(distance_inside > 1e-16f && (C.x > 1e-6f || C.y > 1e-6f || C.z > 1e-6f)) {
                                     next_tp_r[i] *= exp(-C.x * distance_inside); // Apply attenuation
                                     next_tp_g[i] *= exp(-C.y * distance_inside);

@@ -1211,9 +1211,9 @@ void inline intersect_triangles_masked(
 
     // 2. Backface culling: combine incoming mask with backface check
 
-    // auto dot_normal_ray = (tri_norm_x * dir_x) + (tri_norm_y * dir_y) + (tri_norm_z * dir_z);
+    auto dot_normal_ray = (tri_norm_x * dir_x) + (tri_norm_y * dir_y) + (tri_norm_z * dir_z);
 
-    // b_batch backface_mask = (dot_normal_ray < 0.0f);
+    b_batch backface_mask = (dot_normal_ray < 0.0f);
 
     b_batch tri_active_mask = active_mask ;
 

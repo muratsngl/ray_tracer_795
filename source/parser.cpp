@@ -248,6 +248,23 @@ public:
             std::stringstream int_stream(light.at("Intensity").get<std::string>());
             int_stream >> int_r >> int_g >> int_b;
             
+            // Parse and apply transformations if they exist
+            Mat4f transformation_matrix = create_identity_matrix();
+            if (light.contains("Transformations")) {
+                transformation_matrix = build_composite_transform(scene, light.at("Transformations").get<std::string>());
+                
+                // Apply transformation to position (treat as point: w=1)
+                Vec4f pos_homogeneous = {pos_x, pos_y, pos_z, 1.0f};
+                Vec4f transformed_pos = transformation_matrix * pos_homogeneous;
+                
+                // Convert back from homogeneous coordinates
+                if (std::abs(transformed_pos.w) > 1e-6f) {
+                    pos_x = transformed_pos.x / transformed_pos.w;
+                    pos_y = transformed_pos.y / transformed_pos.w;
+                    pos_z = transformed_pos.z / transformed_pos.w;
+                }
+            }
+            
             // Directly populate SoA structure
             scene.point_light_data__.pl_id.push_back(id);
             scene.point_light_data__.pl_pos_x.push_back(pos_x);
@@ -256,6 +273,10 @@ public:
             scene.point_light_data__.pl_intensity_r.push_back(int_r);
             scene.point_light_data__.pl_intensity_g.push_back(int_g);
             scene.point_light_data__.pl_intensity_b.push_back(int_b);
+            
+            // Store transformation matrices
+            scene.point_light_data__.pl_transform.push_back(transformation_matrix);
+            scene.point_light_data__.pl_inv_transform.push_back(mat_inv(transformation_matrix));
         };
         if (sceneData.contains("Lights") && sceneData["Lights"].contains("PointLight")) {
             processOneOrMany(sceneData.at("Lights").at("PointLight"), parsePointLight);
@@ -330,6 +351,73 @@ public:
                 // Default near plane if not specified (and not lookAt)
                 camera.near_plane = {-1.0f, 1.0f, -1.0f, 1.0f};
             }
+            
+            // --- Apply Transformations if present ---
+            Mat4f transformation_matrix = create_identity_matrix();
+            if (cam.contains("Transformations")) {
+                std::string transform_str = cam.at("Transformations").get<std::string>();
+                std::stringstream ss(transform_str);
+                std::string tf_id_str;
+                
+                // Process each transformation separately
+                while (ss >> tf_id_str) {
+                    if (tf_id_str.empty()) continue;
+                    char type = tf_id_str[0];
+                    int id = std::stoi(tf_id_str.substr(1));
+                    
+                    Mat4f M_next = get_transform_by_id(scene, type, id);
+                    
+                    // Apply translation and rotation to position/gaze/up
+                    if (type == 't' || type == 'r' || type == 'c') {
+                        // Apply to position (treat as point: w=1)
+                        Vec4f pos_homogeneous = {camera.position.x, camera.position.y, camera.position.z, 1.0f};
+                        Vec4f transformed_pos = M_next * pos_homogeneous;
+                        if (std::abs(transformed_pos.w) > 1e-6f) {
+                            camera.position.x = transformed_pos.x / transformed_pos.w;
+                            camera.position.y = transformed_pos.y / transformed_pos.w;
+                            camera.position.z = transformed_pos.z / transformed_pos.w;
+                        }
+                        
+                        // Apply to gaze (treat as direction: w=0)
+                        Vec4f gaze_homogeneous = {camera.gaze.x, camera.gaze.y, camera.gaze.z, 0.0f};
+                        Vec4f transformed_gaze = M_next * gaze_homogeneous;
+                        camera.gaze = {transformed_gaze.x, transformed_gaze.y, transformed_gaze.z};
+                        normalize_on_place(camera.gaze);
+                        
+                        // Apply to up (treat as direction: w=0)
+                        Vec4f up_homogeneous = {camera.up.x, camera.up.y, camera.up.z, 0.0f};
+                        Vec4f transformed_up = M_next * up_homogeneous;
+                        camera.up = {transformed_up.x, transformed_up.y, transformed_up.z};
+                        normalize_on_place(camera.up);
+                    }
+                    
+                    // Apply scaling to near plane (zoom effect)
+                    if (type == 's') {
+                        // Use average of x, y, z scaling for uniform zoom effect
+                        fl scale_x = M_next.m11;
+                        fl scale_y = M_next.m22;
+                        fl scale_z = M_next.m33;
+                        fl scale_avg = (scale_x + scale_y + scale_z) / 3.0f;
+                        
+                        // Apply inverse scaling to near plane dimensions
+                        // Larger scale = narrower view (zoom in)
+                        // Smaller scale = wider view (zoom out)
+                        if (std::abs(scale_avg) > 1e-6f) {
+                            camera.near_plane.x /= scale_avg; // left
+                            camera.near_plane.y /= scale_avg; // right
+                            camera.near_plane.z /= scale_avg; // bottom
+                            camera.near_plane.w /= scale_avg; // top
+                        }
+                    }
+                    
+                    // Build composite transformation matrix
+                    transformation_matrix = M_next * transformation_matrix;
+                }
+            }
+            
+            // Store transformation matrices
+            camera.transform = transformation_matrix;
+            camera.inv_transform = mat_inv(transformation_matrix);
 
             scene.cameras.push_back(camera);
         };
@@ -795,7 +883,6 @@ public:
                     BLAS blas;
                     MeshInfo instance_info;
                     instance_info.id = std::stoi(obj.at("_id").get<std::string>());
-                    instance_info.material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
                     instance_info.base_mesh_id = std::stoi(obj.at("_baseMeshId").get<std::string>());
                     instance_info.reset_transform = obj.contains("_resetTransform") ? 
                         (obj.at("_resetTransform").get<std::string>() == "true") : false;
@@ -804,6 +891,13 @@ public:
                         throw std::runtime_error("Could not find base mesh with id: " + std::to_string(instance_info.base_mesh_id));
                     }
                     const MeshInfo& base_mesh_info = mesh_info_map.at(instance_info.base_mesh_id);
+                    
+                    // Use Material from instance if present, otherwise inherit from base mesh
+                    if (obj.contains("Material")) {
+                        instance_info.material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
+                    } else {
+                        instance_info.material_id = base_mesh_info.material_id;
+                    }
 
                     instance_info.base_triangle_index = base_mesh_info.base_triangle_index;
                     instance_info.triangle_count = base_mesh_info.triangle_count;

@@ -136,6 +136,9 @@ struct Camera {
     Vec2i image_resolution;
     fl near_distance;
     int id;
+    
+    Mat4f transform;      // Forward transformation
+    Mat4f inv_transform;  // Inverse transformation
 };
 
 //Ray Structure
@@ -203,6 +206,9 @@ struct PointLightData{
     std::vector<fl> pl_intensity_b;
 
     std::vector<int> pl_id;
+    
+    std::vector<Mat4f> pl_transform;      // Forward transformation
+    std::vector<Mat4f> pl_inv_transform;  // Inverse transformation
 };
 
 struct SphereData{

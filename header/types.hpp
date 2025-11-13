@@ -9,6 +9,7 @@
 
 //global state
 inline bool G_SMOOTH_SHADING_ENABLED = false;
+inline int solo_triangle_counter = 0;
 
 
 typedef float fl;
@@ -242,6 +243,8 @@ struct PlaneData{
 
     std::vector<int> plane_material_id;
     
+    std::vector<Mat4f> plane_transform;      // Forward transformation
+    std::vector<Mat4f> inv_plane_transform;  // Inverse transformation
 };
 struct TransformationData{
     

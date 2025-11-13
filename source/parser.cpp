@@ -18,6 +18,7 @@
 
 using json = nlohmann::json;
 
+
 // --- Helper Functions (unchanged) ---
 static Vec3f parseVec3f(const std::string& str) {
     Vec3f vec;
@@ -108,11 +109,11 @@ public:
         scene.shadow_ray_epsilon = std::stof(sceneData.contains("ShadowRayEpsilon") ? 
             sceneData.at("ShadowRayEpsilon").get<std::string>() : "1e-3");
         scene.intersection_test_epsilon = std::stof(sceneData.contains("IntersectionTestEpsilon") ? 
-            sceneData.at("IntersectionTestEpsilon").get<std::string>() : "1e-9");
+            sceneData.at("IntersectionTestEpsilon").get<std::string>() : "1e-6");
         
         // **FIXED**: Correctly parse MaxRecursionDepth from a string.
         scene.max_recursion_depth = std::stoi(sceneData.contains("MaxRecursionDepth") ? 
-            sceneData.at("MaxRecursionDepth").get<std::string>() : "0");
+            sceneData.at("MaxRecursionDepth").get<std::string>() : "6");
         
         // Handle Lights section safely
         if (sceneData.contains("Lights")) {
@@ -398,10 +399,13 @@ public:
             
             if (objects.contains("Triangle")) {
                 auto parseTriangle = [&](const json& obj) {
+                    // --- 1. Create BLAS object ---
+                    BLAS blas; 
+                    
+                    // --- 2. Parse Triangle Data ---
                     int id = std::stoi(obj.at("_id").get<std::string>());
                     int material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
                     
-                    // Parse indices directly
                     int v0, v1, v2;
                     std::stringstream ind_stream(obj.at("Indices").get<std::string>());
                     ind_stream >> v0 >> v1 >> v2;
@@ -420,11 +424,11 @@ public:
                     fl v2_y = scene.vertex_data__.v_pos_y[v2];
                     fl v2_z = scene.vertex_data__.v_pos_z[v2];
                     
-                    // Calculate edges using scalar operations
+                    // Calculate edges (matching parseMesh)
                     fl edge1_x, edge1_y, edge1_z;
                     fl edge2_x, edge2_y, edge2_z;
-                    subtract_scalar(v2_x, v2_y, v2_z, v1_x, v1_y, v1_z, edge1_x, edge1_y, edge1_z);
-                    subtract_scalar(v0_x, v0_y, v0_z, v1_x, v1_y, v1_z, edge2_x, edge2_y, edge2_z);
+                    subtract_scalar(v1_x, v1_y, v1_z, v0_x, v0_y, v0_z, edge1_x, edge1_y, edge1_z);
+                    subtract_scalar(v2_x, v2_y, v2_z, v0_x, v0_y, v0_z, edge2_x, edge2_y, edge2_z);
                     
                     // Calculate and normalize normal
                     fl norm_x, norm_y, norm_z;
@@ -435,7 +439,10 @@ public:
                     fl centro_y = (v0_y + v1_y+ v2_y)/3;
                     fl centro_z = (v0_z + v1_z+ v2_z)/3;
                 
-                    scene.prim_data__.prim_index.push_back(scene.triangle_data__.v0_ind.size());
+                    // Get the index where this triangle will be stored
+                    int triangle_index = solo_triangle_counter++;
+
+                    scene.prim_data__.prim_index.push_back(triangle_index);
                     scene.prim_data__.primitive_type.push_back(TRIANGLE);
 
                     // Directly populate SoA structure
@@ -447,13 +454,40 @@ public:
                     scene.triangle_data__.tri_norm_z.push_back(norm_z);
                     scene.triangle_data__.triangle_id.push_back(id);
                     scene.triangle_data__.triangle_material_id.push_back(material_id);
-
                     scene.triangle_data__.tri_centro_y.push_back(centro_y);
-
                     scene.triangle_data__.tri_centro_z.push_back(centro_z);
-
                     scene.triangle_data__.tri_centro_x.push_back(centro_x);
 
+                    // --- 3. Create and Populate BLAS ---
+
+                    // Parse transformations if they exist
+                    Mat4f transformation_matrix = create_identity_matrix();
+                    if (obj.contains("Transformations")) {
+                        transformation_matrix = build_composite_transform(scene, obj.at("Transformations").get<std::string>());
+                    }
+                    
+                    // Create AABB for the triangle in local space
+                    AABB local_bbox;
+                    local_bbox.bbox_xmin = std::min({v0_x, v1_x, v2_x});
+                    local_bbox.bbox_ymin = std::min({v0_y, v1_y, v2_y});
+                    local_bbox.bbox_zmin = std::min({v0_z, v1_z, v2_z});
+                    local_bbox.bbox_xmax = std::max({v0_x, v1_x, v2_x});
+                    local_bbox.bbox_ymax = std::max({v0_y, v1_y, v2_y});
+                    local_bbox.bbox_zmax = std::max({v0_z, v1_z, v2_z});
+                    
+                    // Transform the AABB to world space
+                    blas.bbox = transform_aabb(local_bbox, transformation_matrix);
+                    
+                    // Store transforms
+                    blas.transformation_matrix = transformation_matrix;
+                    blas.inv_transform = mat_inv(transformation_matrix);
+                    blas.material_id = material_id;
+                    
+                    // Set the special bvh_index as requested
+                    blas.bvh_index = 11000 + triangle_index; 
+                    
+                    // Add this BLAS to the global list
+                    blas_list.push_back(blas);
                 };
                 processOneOrMany(objects.at("Triangle"), parseTriangle);
             }
@@ -806,6 +840,13 @@ public:
                     int material_id = std::stoi(obj.at("Material").get<std::string>()) - 1;
                     int point_vertex_id = std::stoi(obj.at("Point").get<std::string>()) - 1;
                     Vec3f normal = parseVec3f(obj.at("Normal").get<std::string>());
+                    normalize_on_place(normal);
+                    // Parse transformations if they exist
+                    Mat4f transformation_matrix = create_identity_matrix();
+                    if (obj.contains("Transformations")) {
+                        transformation_matrix = build_composite_transform(scene, obj.at("Transformations").get<std::string>());
+                    }
+                    Mat4f inv_transform = mat_inv(transformation_matrix);
 
                     // Directly populate the SoA structure (scene.plane_data__)
                     scene.plane_data__.plane_id.push_back(id);
@@ -815,6 +856,10 @@ public:
                     scene.plane_data__.plane_norm_x.push_back(normal.x);
                     scene.plane_data__.plane_norm_y.push_back(normal.y);
                     scene.plane_data__.plane_norm_z.push_back(normal.z);
+                    
+                    // Store both forward and inverse transforms
+                    scene.plane_data__.plane_transform.push_back(transformation_matrix);
+                    scene.plane_data__.inv_plane_transform.push_back(inv_transform);
                 };
                 processOneOrMany(objects.at("Plane"), parsePlane);
             }

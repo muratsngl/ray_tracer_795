@@ -1179,6 +1179,8 @@ void inline shade_iterative(RP8& ray_pack, const Scene& scene, ColorBlock& color
                     fl cos_i = dot_scalar(ray_dir_x.get(i), ray_dir_y.get(i), ray_dir_z.get(i),
                                           hit_norm_x.get(i), hit_norm_y.get(i), hit_norm_z.get(i));
                     
+                    
+                    
                     ray_pack.d_x[i] = ray_dir_x.get(i) - 2.0f * hit_norm_x.get(i) * cos_i;
                     ray_pack.d_y[i] = ray_dir_y.get(i) - 2.0f * hit_norm_y.get(i) * cos_i;
                     ray_pack.d_z[i] = ray_dir_z.get(i) - 2.0f * hit_norm_z.get(i) * cos_i;

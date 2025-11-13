@@ -11,7 +11,7 @@ THIRDPARTY = ./third_party
 # -std=c++17: Use the C++17 standard
 # -Wall -Wextra: Enable most warnings
 # -g: Include debug symbols
-# -O3: Maximum optimization level
+# -O0: No optimization (better for debugging)
 # -march=native: Enable all instruction subsets supported by the local machine
 # -mavx2: Enable AVX2 instructions (comment out if your CPU doesn't support it)
 # -mfma: Enable FMA (Fused Multiply-Add) instructions

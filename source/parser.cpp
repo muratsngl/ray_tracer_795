@@ -172,6 +172,7 @@ public:
             material.ambient_reflectance = parseVec3f(mat.at("AmbientReflectance").get<std::string>());
             material.diffuse_reflectance = parseVec3f(mat.at("DiffuseReflectance").get<std::string>());
             material.specular_reflectance = parseVec3f(mat.at("SpecularReflectance").get<std::string>());
+            material.roughness = mat.contains("Roughness")?std::stof(mat.at("Roughness").get<std::string>()):0.f;
             material.phong_exponent = mat.contains("PhongExponent") ? 
                 std::stof(mat.at("PhongExponent").get<std::string>()) : 1.0f;
             if (mat.contains("MirrorReflectance")) material.mirror_reflectance = parseVec3f(mat.at("MirrorReflectance").get<std::string>());
@@ -235,6 +236,41 @@ public:
         }
        
         // --- Parse Lights (Generalized) ---
+        auto parseAreaLight = [&](const json& light){
+            fl pos_x, pos_y, pos_z;
+            std::stringstream pos_stream(light.at("Position").get<std::string>());
+            pos_stream >> pos_x >> pos_y >> pos_z;
+
+            fl int_r, int_g, int_b;
+            std::stringstream int_stream(light.at("Radiance").get<std::string>());
+            int_stream >> int_r >> int_g >> int_b;
+
+            fl norm_x,norm_y,norm_z;
+            std::stringstream norm_stream(light.at("Normal").get<std::string>());
+            norm_stream>>norm_x>>norm_y>>norm_z;
+
+            fl size = std::stof(light.at("Size").get<std::string>());
+
+            //SHOULD BE NAMED RADIANCE
+            scene.area_light_data__.al_intensity_r.push_back(int_r);
+            scene.area_light_data__.al_intensity_g.push_back(int_g);
+            scene.area_light_data__.al_intensity_b.push_back(int_b);
+
+            scene.area_light_data__.al_pos_x.push_back(pos_x);
+            scene.area_light_data__.al_pos_y.push_back(pos_y);
+            scene.area_light_data__.al_pos_z.push_back(pos_z);
+
+            scene.area_light_data__.al_norm_x.push_back(norm_x);
+            scene.area_light_data__.al_norm_y.push_back(norm_y);
+            scene.area_light_data__.al_norm_z.push_back(norm_z);
+
+            scene.area_light_data__.size.push_back(size);
+            scene.area_light_data__.area.push_back(size*size);
+
+            
+
+        };
+        
         auto parsePointLight = [&](const json& light) {
             int id = std::stoi(light.at("_id").get<std::string>());
             
@@ -278,10 +314,13 @@ public:
             scene.point_light_data__.pl_transform.push_back(transformation_matrix);
             scene.point_light_data__.pl_inv_transform.push_back(mat_inv(transformation_matrix));
         };
-        if (sceneData.contains("Lights") && sceneData["Lights"].contains("PointLight")) {
+        if (sceneData.contains("Lights") ) {
+            if(sceneData["Lights"].contains("PointLight"))
             processOneOrMany(sceneData.at("Lights").at("PointLight"), parsePointLight);
+            if(sceneData["Lights"].contains("AreaLight"))
+            processOneOrMany(sceneData.at("Lights").at("AreaLight"), parseAreaLight);
         }
-
+        
         
         //Calculate Normals 1- for faces(per vertex, per face, )
        

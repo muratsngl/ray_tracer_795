@@ -2,6 +2,7 @@
 #include "types.hpp"
 #include "utils.hpp"
 #include "rt_functions.hpp"
+#include "rand_sampler.hpp"
 
 // Convert ColorBlockFl (fl) to ColorBlock (unsigned char) with clamping
 void inline convert_to_unsigned_char(const ColorBlockFl& color_block_int, ColorBlock& color_block){
@@ -76,6 +77,48 @@ inline void calculate_refraction_direction(
     refract_dz = eta * incident_dz + wt_coeff * normal_z;
     // Normalize result (optional but safer)
     normalize_scalar(refract_dx, refract_dy, refract_dz);
+}
+
+inline void calculate_glossy_reflection(
+    fl perfect_reflect_x, fl perfect_reflect_y, fl perfect_reflect_z,
+    fl roughness,
+    fl& glossy_reflect_x, fl& glossy_reflect_y, fl& glossy_reflect_z)
+{
+    fl r_x = perfect_reflect_x;
+    fl r_y = perfect_reflect_y;
+    fl r_z = perfect_reflect_z;
+    
+    fl r_prime_x = r_x;
+    fl r_prime_y = r_y;
+    fl r_prime_z = r_z;
+    
+    fl abs_x = fabs(r_x);
+    fl abs_y = fabs(r_y);
+    fl abs_z = fabs(r_z);
+    
+    if (abs_x <= abs_y && abs_x <= abs_z) {
+        r_prime_x = 1.0f;
+    } else if (abs_y <= abs_x && abs_y <= abs_z) {
+        r_prime_y = 1.0f;
+    } else {
+        r_prime_z = 1.0f;
+    }
+    
+    fl u_x, u_y, u_z;
+    cross_scalar(r_x, r_y, r_z, r_prime_x, r_prime_y, r_prime_z, u_x, u_y, u_z);
+    normalize_scalar(u_x, u_y, u_z);
+    
+    fl v_x, v_y, v_z;
+    cross_scalar(r_x, r_y, r_z, u_x, u_y, u_z, v_x, v_y, v_z);
+    
+    fl xi1 = 2.0f * generate_rand_sample() - 1.0f;
+    fl xi2 = 2.0f * generate_rand_sample() - 1.0f;
+    
+    glossy_reflect_x = r_x + roughness * (xi1 * u_x + xi2 * v_x);
+    glossy_reflect_y = r_y + roughness * (xi1 * u_y + xi2 * v_y);
+    glossy_reflect_z = r_z + roughness * (xi1 * u_z + xi2 * v_z);
+    
+    normalize_scalar(glossy_reflect_x, glossy_reflect_y, glossy_reflect_z);
 }
 
 void inline no_shades(const RP8& ray_pack, const Scene& scene, ColorBlock& color_block){
@@ -818,7 +861,7 @@ void inline ambient_masked(const RP8& ray_pack, const Scene& scene, ColorBlockFl
 
 void inline diffuse_masked(const RP8& ray_pack, const Scene& scene, ColorBlockFl& color_block, const b_batch& active_mask, int light_index,
                     const f_batch& light_dir_x, const f_batch& light_dir_y, const f_batch& light_dir_z,
-                    const f_batch& distance){
+                    const f_batch& distance,bool is_area_light){
     
     f_batch zero_batch = xs::broadcast(0.0f);
     if(xs::none(active_mask)) return;
@@ -845,10 +888,24 @@ void inline diffuse_masked(const RP8& ray_pack, const Scene& scene, ColorBlockFl
     f_batch material_g = xs::load_aligned(mat_g);
     f_batch material_b = xs::load_aligned(mat_b);
     
-    // Step 3: Load light intensity
-    f_batch light_r = xs::broadcast(scene.point_light_data__.pl_intensity_r[light_index]);
-    f_batch light_g = xs::broadcast(scene.point_light_data__.pl_intensity_g[light_index]);
-    f_batch light_b = xs::broadcast(scene.point_light_data__.pl_intensity_b[light_index]);
+    f_batch light_r;
+    f_batch light_g;
+    f_batch light_b;
+    if(is_area_light){
+        f_batch light_norm_x = xs::broadcast(scene.area_light_data__.al_norm_x[light_index]); 
+        f_batch light_norm_y = xs::broadcast(scene.area_light_data__.al_norm_y[light_index]); 
+        f_batch light_norm_z = xs::broadcast(scene.area_light_data__.al_norm_z[light_index]); 
+        f_batch cos_a = xs::abs(dot_simd(light_norm_x,light_norm_y,light_norm_z,light_dir_x,light_dir_y,light_dir_z));
+        f_batch irradiance_multiplier = xs::broadcast(scene.area_light_data__.area[light_index])*cos_a;
+        light_r = xs::broadcast(scene.area_light_data__.al_intensity_r[light_index])*irradiance_multiplier;
+        light_g = xs::broadcast(scene.area_light_data__.al_intensity_g[light_index])*irradiance_multiplier;
+        light_b = xs::broadcast(scene.area_light_data__.al_intensity_b[light_index])*irradiance_multiplier;
+    }
+    else{
+        light_r = xs::broadcast(scene.point_light_data__.pl_intensity_r[light_index]);
+        light_g = xs::broadcast(scene.point_light_data__.pl_intensity_g[light_index]);
+        light_b = xs::broadcast(scene.point_light_data__.pl_intensity_b[light_index]);
+    }
     
     // Step 4: Apply attenuation
     f_batch distance_squared = distance * distance;
@@ -879,7 +936,7 @@ void inline diffuse_masked(const RP8& ray_pack, const Scene& scene, ColorBlockFl
 void inline specular_masked(const RP8& ray_pack, const Scene& scene, ColorBlockFl& color_block, const b_batch& active_mask, int light_index,
                      const f_batch& light_dir_x, const f_batch& light_dir_y, const f_batch& light_dir_z,
                      const f_batch& ray_dir_x, const f_batch& ray_dir_y, const f_batch& ray_dir_z,
-                     const f_batch& distance){
+                     const f_batch& distance,bool is_area_light){
     
     f_batch zero_batch = xs::broadcast(0.0f);
     if(xs::none(active_mask)) return;
@@ -919,9 +976,29 @@ void inline specular_masked(const RP8& ray_pack, const Scene& scene, ColorBlockF
     // --- Calculate Color ---
     f_batch specular_intensity = xs::pow(specular_base, phong_exponent);
     
-    f_batch light_r = xs::broadcast(scene.point_light_data__.pl_intensity_r[light_index]);
-    f_batch light_g = xs::broadcast(scene.point_light_data__.pl_intensity_g[light_index]);
-    f_batch light_b = xs::broadcast(scene.point_light_data__.pl_intensity_b[light_index]);
+    // f_batch light_r = is_area_light?xs::broadcast(scene.area_light_data__.al_intensity_r[light_index]):xs::broadcast(scene.point_light_data__.pl_intensity_r[light_index]);
+    // f_batch light_g = is_area_light?xs::broadcast(scene.area_light_data__.al_intensity_g[light_index]):xs::broadcast(scene.point_light_data__.pl_intensity_g[light_index]);
+    // f_batch light_b = is_area_light?xs::broadcast(scene.area_light_data__.al_intensity_b[light_index]):xs::broadcast(scene.point_light_data__.pl_intensity_b[light_index]);
+    f_batch light_r;
+    f_batch light_g;
+    f_batch light_b;
+    if(is_area_light){
+        f_batch light_norm_x = xs::broadcast(scene.area_light_data__.al_norm_x[light_index]); 
+        f_batch light_norm_y = xs::broadcast(scene.area_light_data__.al_norm_y[light_index]); 
+        f_batch light_norm_z = xs::broadcast(scene.area_light_data__.al_norm_z[light_index]); 
+        f_batch cos_a = xs::abs(dot_simd(light_norm_x,light_norm_y,light_norm_z,light_dir_x,light_dir_y,light_dir_z));
+        f_batch irradiance_multiplier = xs::broadcast(scene.area_light_data__.area[light_index])*cos_a;
+        light_r = xs::broadcast(scene.area_light_data__.al_intensity_r[light_index])*irradiance_multiplier;
+        light_g = xs::broadcast(scene.area_light_data__.al_intensity_g[light_index])*irradiance_multiplier;
+        light_b = xs::broadcast(scene.area_light_data__.al_intensity_b[light_index])*irradiance_multiplier;
+    }
+    else{
+        light_r = xs::broadcast(scene.point_light_data__.pl_intensity_r[light_index]);
+        light_g = xs::broadcast(scene.point_light_data__.pl_intensity_g[light_index]);
+        light_b = xs::broadcast(scene.point_light_data__.pl_intensity_b[light_index]);
+    }
+    
+    
     
     f_batch distance_squared = distance * distance;
     f_batch attenuation = xs::broadcast(1.0f) / distance_squared;
@@ -1020,17 +1097,115 @@ void inline shade_local_masked(RP8& ray_pack, const Scene& scene, const b_batch&
         if(xs::none(final_shade_mask)) continue;
 
         // --- 4. Add Diffuse & Specular ---
+        //use minus light dir in arealight calculationns
         f_batch light_dir_x = object_to_light_x;
         f_batch light_dir_y = object_to_light_y;
         f_batch light_dir_z = object_to_light_z;
+        
+        
+        //suspect
         normalize_simd_overwrite(light_dir_x, light_dir_y, light_dir_z);
 
         diffuse_masked(ray_pack, scene, local_color_buffer, final_shade_mask, i,
-                       light_dir_x, light_dir_y, light_dir_z, distance);
+                       light_dir_x, light_dir_y, light_dir_z, distance,false);
         
         specular_masked(ray_pack, scene, local_color_buffer, final_shade_mask, i,
                         light_dir_x, light_dir_y, light_dir_z,
-                        ray_dir_x, ray_dir_y, ray_dir_z, distance);
+                        ray_dir_x, ray_dir_y, ray_dir_z, distance,false);
+    }
+    for(int i = 0;i<scene.area_light_data__.al_intensity_b.size();i++){
+        //DATA NEEDED
+        //Position of the light,size of the area_light => generate 2 random numbers to find the light sampling position with uv basis routine ofc
+        //HERE sample 16 different random numbers and one orthonormal base so that we can sample 8 different light pos for 8 different rays.
+        
+
+        fl light_pos_x_single = scene.area_light_data__.al_pos_x[i];
+        fl light_pos_y_single = scene.area_light_data__.al_pos_y[i];
+        fl light_pos_z_single = scene.area_light_data__.al_pos_z[i];
+
+        fl light_pos_arr_x[8]={};
+
+        fl light_pos_arr_y[8]={};
+
+        fl light_pos_arr_z[8]={};
+        Vec3f light_norm{scene.area_light_data__.al_norm_x[i],scene.area_light_data__.al_norm_y[i],scene.area_light_data__.al_norm_z[i]};
+        Vec3f light_plane_u;
+        Vec3f light_plane_v;
+        if(fabs(light_norm.x)<fabs(light_norm.y)){
+                if(fabs(light_norm.x)<fabs(light_norm.z)){
+                    light_plane_u = {0,light_norm.z,-light_norm.y};
+                }
+                else{
+                   light_plane_u = {-light_norm.y,light_norm.x,0};
+                }
+            }
+            else if(fabs(light_norm.y)<fabs(light_norm.z)){
+                    light_plane_u = {-light_norm.z,0,light_norm.x};
+                
+            }
+            else{
+                   light_plane_u = {-light_norm.y,light_norm.x,0};
+            }
+            normalize_on_place(light_plane_u);
+            light_plane_v = normalize(cross(light_norm,light_plane_u));
+        for(int j = 0;j<8;j++){
+            fl random_u = (generate_rand_sample()-0.5f)*scene.area_light_data__.size[i];
+            fl random_v = (generate_rand_sample()-0.5f)*scene.area_light_data__.size[i];
+            
+            Vec3f sampled_light_pos = (random_u*light_plane_u+random_v*light_plane_v);
+            light_pos_arr_x[j] = light_pos_x_single+sampled_light_pos.x;
+            light_pos_arr_y[j] = light_pos_y_single+sampled_light_pos.y;
+            light_pos_arr_z[j] = light_pos_z_single+sampled_light_pos.z;
+        
+        }
+        f_batch light_pos_x = xs::load(light_pos_arr_x);
+        f_batch light_pos_y = xs::load(light_pos_arr_y);
+        f_batch light_pos_z = xs::load(light_pos_arr_z);
+
+        f_batch object_to_light_x = light_pos_x - hit_x;
+        f_batch object_to_light_y = light_pos_y - hit_y;
+        f_batch object_to_light_z = light_pos_z - hit_z;
+        f_batch distance = length_simd(object_to_light_x, object_to_light_y, object_to_light_z);
+        
+        // --- 3. Shadow Test ---
+        RP8 shadow_rays;
+        f_batch epsilon = xs::broadcast(scene.shadow_ray_epsilon);
+        xs::store(shadow_rays.o_x, hit_x + hit_norm_x * epsilon);
+        xs::store(shadow_rays.o_y, hit_y + hit_norm_y * epsilon);
+        xs::store(shadow_rays.o_z, hit_z + hit_norm_z * epsilon);
+        xs::store(shadow_rays.d_x, object_to_light_x);
+        xs::store(shadow_rays.d_y, object_to_light_y);
+        xs::store(shadow_rays.d_z, object_to_light_z);
+        b_batch is_occluded;
+        
+        // Use BVH for shadow ray intersection
+        intersect_tlas_any_hit_wrapper(shadow_rays, scene, 
+                                 distance,       // t_max
+                                 is_occluded,    // is_occluded (output)
+                                 local_mask);    // active_mask
+        b_batch in_light = !is_occluded;
+        b_batch final_shade_mask = in_light & local_mask;
+        if(xs::none(final_shade_mask)) continue;
+
+        // --- 4. Add Diffuse & Specular ---
+        f_batch light_dir_x = object_to_light_x;
+        f_batch light_dir_y = object_to_light_y;
+        f_batch light_dir_z = object_to_light_z;
+        
+        normalize_simd_overwrite(light_dir_x, light_dir_y, light_dir_z);
+
+        //normal of the light => to find the incident angle at which the rays reach the sample. 
+        //radiance=>
+        //above data are processed inside these functions
+        diffuse_masked(ray_pack, scene, local_color_buffer, final_shade_mask, i,
+                       light_dir_x, light_dir_y, light_dir_z, distance,true);
+
+        specular_masked(ray_pack, scene, local_color_buffer, final_shade_mask, i,
+                        light_dir_x, light_dir_y, light_dir_z,
+                        ray_dir_x, ray_dir_y, ray_dir_z, distance,true);
+
+
+
     }
 }
 
@@ -1168,32 +1343,35 @@ void inline shade_iterative(RP8& ray_pack, const Scene& scene, ColorBlock& color
                 const Material& mat = scene.materials[mat_id];
 
                 if (mat.type == "mirror") {
-                    // --- Ray Hit Mirror ---
-                    // Don't shade. Update throughput, reflect ray, keep active.
                     if(ray_pack.depth[i]>=scene.max_recursion_depth)continue;
                     next_tp_r[i] = tp_r[i] * mat.mirror_reflectance.x;
                     next_tp_g[i] = tp_g[i] * mat.mirror_reflectance.y;
                     next_tp_b[i] = tp_b[i] * mat.mirror_reflectance.z;
 
-                    // Reflect: wr = -wo + 2n(n.wo)
                     fl cos_i = dot_scalar(ray_dir_x.get(i), ray_dir_y.get(i), ray_dir_z.get(i),
                                           hit_norm_x.get(i), hit_norm_y.get(i), hit_norm_z.get(i));
                     
+                    fl perfect_reflect_x = ray_dir_x.get(i) - 2.0f * hit_norm_x.get(i) * cos_i;
+                    fl perfect_reflect_y = ray_dir_y.get(i) - 2.0f * hit_norm_y.get(i) * cos_i;
+                    fl perfect_reflect_z = ray_dir_z.get(i) - 2.0f * hit_norm_z.get(i) * cos_i;
                     
-                    
-                    ray_pack.d_x[i] = ray_dir_x.get(i) - 2.0f * hit_norm_x.get(i) * cos_i;
-                    ray_pack.d_y[i] = ray_dir_y.get(i) - 2.0f * hit_norm_y.get(i) * cos_i;
-                    ray_pack.d_z[i] = ray_dir_z.get(i) - 2.0f * hit_norm_z.get(i) * cos_i;
+                    if (mat.roughness > 0.0f) {
+                        calculate_glossy_reflection(perfect_reflect_x, perfect_reflect_y, perfect_reflect_z,
+                                                   mat.roughness,
+                                                   ray_pack.d_x[i], ray_pack.d_y[i], ray_pack.d_z[i]);
+                    } else {
+                        ray_pack.d_x[i] = perfect_reflect_x;
+                        ray_pack.d_y[i] = perfect_reflect_y;
+                        ray_pack.d_z[i] = perfect_reflect_z;
+                    }
                     
                     ray_pack.o_x[i] = hit_pos_x.get(i) + hit_norm_x.get(i) * scene.shadow_ray_epsilon;
                     ray_pack.o_y[i] = hit_pos_y.get(i) + hit_norm_y.get(i) * scene.shadow_ray_epsilon;
                     ray_pack.o_z[i] = hit_pos_z.get(i) + hit_norm_z.get(i) * scene.shadow_ray_epsilon;
                     ray_pack.depth[i]++;
-                   
                     
                     local_shade[i] = true; 
-                    next_active[i] = true; // Keep this lane active
-                    
+                    next_active[i] = true;
 
                 } 
                 else if (mat.type == "conductor"){
@@ -1238,20 +1416,27 @@ void inline shade_iterative(RP8& ray_pack, const Scene& scene, ColorBlock& color
                     next_tp_g[i] = tp_g[i] * Fr * mat.mirror_reflectance.y;
                     next_tp_b[i] = tp_b[i] * Fr * mat.mirror_reflectance.z;
 
-                    // 4. Reflect ray in place for next bounce (same as mirror)
-                    // wr = d - 2n(n.d)
                     fl n_dot_d = dot_scalar(hit_norm_x.get(i), hit_norm_y.get(i), hit_norm_z.get(i),
                                             ray_dir_x.get(i), ray_dir_y.get(i), ray_dir_z.get(i));
-                    ray_pack.d_x[i] = ray_dir_x.get(i) - 2.0f * hit_norm_x.get(i) * n_dot_d;
-                    ray_pack.d_y[i] = ray_dir_y.get(i) - 2.0f * hit_norm_y.get(i) * n_dot_d;
-                    ray_pack.d_z[i] = ray_dir_z.get(i) - 2.0f * hit_norm_z.get(i) * n_dot_d;
+                    fl perfect_reflect_x = ray_dir_x.get(i) - 2.0f * hit_norm_x.get(i) * n_dot_d;
+                    fl perfect_reflect_y = ray_dir_y.get(i) - 2.0f * hit_norm_y.get(i) * n_dot_d;
+                    fl perfect_reflect_z = ray_dir_z.get(i) - 2.0f * hit_norm_z.get(i) * n_dot_d;
+
+                    if (mat.roughness > 0.0f) {
+                        calculate_glossy_reflection(perfect_reflect_x, perfect_reflect_y, perfect_reflect_z,
+                                                   mat.roughness,
+                                                   ray_pack.d_x[i], ray_pack.d_y[i], ray_pack.d_z[i]);
+                    } else {
+                        ray_pack.d_x[i] = perfect_reflect_x;
+                        ray_pack.d_y[i] = perfect_reflect_y;
+                        ray_pack.d_z[i] = perfect_reflect_z;
+                    }
 
                     ray_pack.o_x[i] = hit_pos_x.get(i) + hit_norm_x.get(i) * scene.shadow_ray_epsilon;
                     ray_pack.o_y[i] = hit_pos_y.get(i) + hit_norm_y.get(i) * scene.shadow_ray_epsilon;
                     ray_pack.o_z[i] = hit_pos_z.get(i) + hit_norm_z.get(i) * scene.shadow_ray_epsilon;
                     ray_pack.depth[i]++;
 
-                    // 5. Mark ray as active for next bounce
                     next_active[i] = true;
                 }
                 else if (mat.type == "dielectric") {

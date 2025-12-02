@@ -3,13 +3,11 @@
 #include <random>
 #include "types.hpp"
 
-static std::mt19937 g_random_generator;
-static std::uniform_real_distribution<> g_normalized_random(0,1);
-
-
-//use the mersenne twister ahmet hoca provided
+//use the mersenne twister ahmet hoca provided - now thread-safe
 inline fl generate_rand_sample(){
-    return g_normalized_random(g_random_generator);
+    thread_local std::mt19937 generator(std::random_device{}());
+    thread_local std::uniform_real_distribution<> distribution(0.0, 1.0);
+    return distribution(generator);
 }
 
 

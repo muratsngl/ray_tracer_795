@@ -71,6 +71,7 @@ struct Material {
     fl phong_exponent;
     fl refraction_index;
     fl absorption_index;
+    fl roughness;
     int id;
 };
 
@@ -94,6 +95,8 @@ struct SoARayQueue{
     std::vector<fl> tp_r;
     std::vector<fl> tp_g;
     std::vector<fl> tp_b;
+    std::vector<fl> area_light_u;
+    std::vector<fl> area_light_v;
     std::vector<int> depth;
     std::vector<int> pixel_index; // Index to track which pixel (0-7) this ray belongs to
 
@@ -214,6 +217,24 @@ struct PointLightData{
     std::vector<Mat4f> pl_inv_transform;  // Inverse transformation
 };
 
+struct AreaLightData{
+    std::vector<fl> al_pos_x;
+    std::vector<fl> al_pos_y;
+    std::vector<fl> al_pos_z;
+
+    std::vector<fl> al_norm_x;
+    std::vector<fl> al_norm_y;
+    std::vector<fl> al_norm_z;
+
+    std::vector<fl> size;
+    std::vector<fl> area;
+    std::vector<fl> al_intensity_r;
+    std::vector<fl> al_intensity_g;
+    std::vector<fl> al_intensity_b;
+    
+
+};
+
 struct SphereData{
     std::vector<int> sphere_id;
     std::vector<int> sphere_mat_id;
@@ -288,6 +309,7 @@ struct Scene {
     // SoA (Structure of Arrays) for data-oriented design
     VertexData vertex_data__;
     PointLightData point_light_data__;
+    AreaLightData area_light_data__;
     SphereData sphere_data__;
     TriangleData triangle_data__;
     PlaneData plane_data__;

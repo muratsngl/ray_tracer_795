@@ -295,7 +295,9 @@ public:
             camera.near_distance = std::stof(cam.at("NearDistance").get<std::string>());
             camera.image_resolution = parseVec2i(cam.at("ImageResolution").get<std::string>());
             camera.position = parseVec3f(cam.at("Position").get<std::string>());
-            
+            camera.num_samples = cam.contains("NumSamples")? std::stoi(cam.at("NumSamples").get<std::string>()):4; 
+            camera.focus_distance = cam.contains("FocusDistance")?std::stof(cam.at("FocusDistance").get<std::string>()):-1.f;
+            camera.aperture_size = cam.contains("ApertureSize")?std::stof(cam.at("ApertureSize").get<std::string>()):-1.f;
             // --- Gaze Calculation ---
             if (cam.contains("Gaze")) {
                 camera.gaze = parseVec3f(cam.at("Gaze").get<std::string>());

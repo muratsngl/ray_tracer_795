@@ -136,6 +136,9 @@ struct Camera {
     Vec2i image_resolution;
     fl near_distance;
     int id;
+    int num_samples;
+    float focus_distance;
+    float aperture_size;
     
     Mat4f transform;      // Forward transformation
     Mat4f inv_transform;  // Inverse transformation

@@ -1213,7 +1213,7 @@ void inline intersect_triangles_masked(
 
     auto dot_normal_ray = (tri_norm_x * dir_x) + (tri_norm_y * dir_y) + (tri_norm_z * dir_z);
 
-    b_batch backface_mask = (false);
+    b_batch backface_mask = (dot_normal_ray < 0.0f);
 
     b_batch tri_active_mask = active_mask ;
 
@@ -1294,9 +1294,9 @@ void inline intersect_triangles_masked(
 
     // Epsilon checks
 
-    const fl epsilon = 1e-16f;
+    const fl epsilon = 1e-12f;
 
-    const fl bary_epsilon = 0.f;
+    const fl bary_epsilon = 1e-5f;
 
     f_batch zero_batch(0.0f);
 
@@ -1625,7 +1625,7 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
     const TLASNode& node = tlas.tlas_root[tlas_node_id];
 
 
-    // Test TLAS nodes AABB
+    // Test TLAS node's AABB
 
     intersect_aabb(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z, t_min, node.bbox, active_mask);
 
@@ -3003,4 +3003,3 @@ void inline intersect_tlas_any_hit_wrapper(RP8& ray_pack, const Scene& scene,
 
 
 #endif
-

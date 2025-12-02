@@ -4,6 +4,7 @@
 #include "rt_functions.hpp"
 #include "shader.hpp"
 #include "bvh.hpp"
+#include "rand_sampler.hpp"
 #include <omp.h>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -66,11 +67,16 @@ int main(int argc, char* argv[]) {
 
         Vec3f delta_su = (cam.near_plane.y-cam.near_plane.x)/cam.image_resolution.x*u;
         Vec3f delta_sv = (cam.near_plane.w-cam.near_plane.z)/cam.image_resolution.y*v;
-
-        Vec3f dir = plane_top_left + (0.5f * delta_su) - (0.5f * delta_sv) - cam.position;
+        int sample_n = cam.num_samples;
+        int sample_n_sqrt = sqrt(cam.num_samples);
+        //now we sample from the top left as we add 1.0f and -1.0f for u,v respectively
+        Vec3f dir = plane_top_left - cam.position;
+        //Vec3f dir = plane_top_left + (0.5f * delta_su) - (0.5f * delta_sv) - cam.position;
         #pragma omp parallel for schedule(dynamic)
         for(int j = 0; j<cam.image_resolution.y;j+=2){
             for(int i = 0;i<cam.image_resolution.x;i+=4){
+                ColorBlockFl accum;
+                std::vector<RP8>sample_pack;
                 ColorBlock cb;
                 Vec3f d_base = dir + (fl)i * delta_su - (fl)j * delta_sv;
                         //j
@@ -99,22 +105,29 @@ int main(int argc, char* argv[]) {
                             .d_z{d0.z, d1.z, d2.z, d3.z, d4.z, d5.z, d6.z, d7.z}
                         };
                                 
-                        //return_closest_hit(ray_package,scene,scene.vertex_data__);
                         
-                        //shade(ray_package,scene,cb);
-                        intersect_tlas_wrapper(ray_package, scene);
-
-                        shade_iterative(ray_package,scene,cb);
+                        
                        
                         //implement write caching here(after bvh implementation) 
                         //shade_trad(ray_package,scene,cb);
+                        
+                
+                        jitter_sample(sample_n_sqrt,sample_pack,ray_package,delta_su,delta_sv,cam,u,v);       
+                        
+                        for(auto&sample:sample_pack)
+                        {
+                        ColorBlock ms_block;    
+                        intersect_tlas_wrapper(sample, scene);
+                        shade_iterative(sample,scene,ms_block);
+
+                        accum+=ms_block;
+                        }
+                        // //add a distance parameter to this to make gaussian filter happen :)
+                        accum = box_filter(accum,sample_n);        
+                        convert_to_unsigned_char(accum,cb);
                         memcpy(&image.data()[current_mem_ptr],cb.rgb,12*sizeof(unsigned char));
                         current_mem_ptr += cam.image_resolution.x*3;
-                        memcpy(&image.data()[current_mem_ptr],&cb.rgb[12],12*sizeof(unsigned char));
-                       
-                       
-                        
-                        
+                        memcpy(&image.data()[current_mem_ptr],&cb.rgb[12],12*sizeof(unsigned char));        
                         
                         
                 };

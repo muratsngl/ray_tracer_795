@@ -33,6 +33,12 @@ inline Vec3f operator/( const Vec3f& v0,fl alpha){
      return {v0.x/alpha,v0.y/alpha,v0.z/alpha};
 }
 
+
+inline void operator+=(ColorBlockFl& c1, ColorBlock& c2){
+    for(int i = 0;i<24;i++)c1.rgb[i] += c2.rgb[i]; 
+}
+
+
 inline void operator+=(Vec3f& v0, const Vec3f& v1){
     v0.x += v1.x;v0.y += v1.y;v0.z += v1.z;
 };

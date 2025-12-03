@@ -1085,6 +1085,7 @@ void inline shade_local_masked(RP8& ray_pack, const Scene& scene, const b_batch&
         xs::store(shadow_rays.d_x, object_to_light_x);
         xs::store(shadow_rays.d_y, object_to_light_y);
         xs::store(shadow_rays.d_z, object_to_light_z);
+        xs::store(shadow_rays.time, xs::load(ray_pack.time));
         b_batch is_occluded;
         
         // Use BVH for shadow ray intersection
@@ -1176,6 +1177,7 @@ void inline shade_local_masked(RP8& ray_pack, const Scene& scene, const b_batch&
         xs::store(shadow_rays.d_x, object_to_light_x);
         xs::store(shadow_rays.d_y, object_to_light_y);
         xs::store(shadow_rays.d_z, object_to_light_z);
+        xs::store(shadow_rays.time, xs::load(ray_pack.time));
         b_batch is_occluded;
         
         // Use BVH for shadow ray intersection

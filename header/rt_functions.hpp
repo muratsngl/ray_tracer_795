@@ -1618,7 +1618,7 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
 
                            f_batch& hit_pos_x, f_batch& hit_pos_y, f_batch& hit_pos_z,
 
-                           const Scene& scene, const uint tlas_node_id, b_batch active_mask) {
+                           const Scene& scene, const uint tlas_node_id, b_batch active_mask,const f_batch&(time)) {
 
     
 
@@ -1660,6 +1660,16 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
                                  local_d_x, local_d_y, local_d_z,
 
                                  blas.inv_transform);
+
+            
+            
+            
+            if(blas.motion_blur){
+            local_o_x -= time*blas.mb_vector.x;
+            local_o_y -= time*blas.mb_vector.y;
+            local_o_z -= time*blas.mb_vector.z;
+            }
+            
 
 
             // Create batches for this BLAS's hit data
@@ -1755,7 +1765,11 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
                 f_batch local_hit_y = local_o_y + local_t_min * local_d_y;
 
                 f_batch local_hit_z = local_o_z + local_t_min * local_d_z;
-
+                if(blas.motion_blur){
+                    local_hit_x += time*blas.mb_vector.x;
+                    local_hit_y += time*blas.mb_vector.y;
+                    local_hit_z += time*blas.mb_vector.z;
+                }
 
                 // Transform hit point and normal back to world space
 
@@ -1763,6 +1777,7 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
 
                 f_batch world_norm_x, world_norm_y, world_norm_z;
 
+                
                 transform_hit_results(local_hit_x, local_hit_y, local_hit_z,
 
                                       local_norm_x, local_norm_y, local_norm_z,
@@ -1819,8 +1834,12 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
                                  local_d_x, local_d_y, local_d_z,
 
                                  blas.inv_transform);
-
-
+            if(blas.motion_blur){
+            local_o_x -= time*blas.mb_vector.x;
+            local_o_y -= time*blas.mb_vector.y;
+            local_o_z -= time*blas.mb_vector.z;
+            }
+            
             f_batch local_t_min = t_min;
 
             i_batch local_mat_id = xs::broadcast(blas.material_id);
@@ -1909,7 +1928,11 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
                 f_batch local_hit_y = local_o_y + local_t_min * local_d_y;
 
                 f_batch local_hit_z = local_o_z + local_t_min * local_d_z;
-
+                 if(blas.motion_blur){
+                    local_hit_x += time*blas.mb_vector.x;
+                    local_hit_y += time*blas.mb_vector.y;
+                    local_hit_z += time*blas.mb_vector.z;
+                }
 
                 f_batch world_hit_x, world_hit_y, world_hit_z;
 
@@ -1960,7 +1983,7 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
 
                        hit_pos_x, hit_pos_y, hit_pos_z,
 
-                       scene, node.left_child_index, active_mask);
+                       scene, node.left_child_index, active_mask,time);
 
         
 
@@ -1970,7 +1993,7 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
 
                        hit_pos_x, hit_pos_y, hit_pos_z,
 
-                       scene, node.left_child_index + 1, active_mask);
+                       scene, node.left_child_index + 1, active_mask,time);
 
     }
 
@@ -2039,7 +2062,8 @@ void intersect_tlas_wrapper(RP8& ray_pack, const Scene& scene) {
 
     f_batch hit_pos_z = xs::load(&ray_pack.hit_pos_z[0]);
 
-
+    f_batch time = xs::load(ray_pack.time);
+   
     // 6. Start with all rays active
 
     b_batch active_mask = true;
@@ -2057,7 +2081,7 @@ void intersect_tlas_wrapper(RP8& ray_pack, const Scene& scene) {
 
                    hit_pos_x, hit_pos_y, hit_pos_z,
 
-                   scene, 0, active_mask);
+                   scene, 0, active_mask,time);
 
     
 
@@ -2497,7 +2521,7 @@ void inline intersect_tlas_any_hit(const f_batch& orig_x, const f_batch& orig_y,
 
                                     const Scene& scene, const uint tlas_node_id, 
 
-                                    b_batch active_mask, const fl epsilon) {
+                                    b_batch active_mask, const fl epsilon, const f_batch& time) {
 
     
 
@@ -2542,6 +2566,13 @@ void inline intersect_tlas_any_hit(const f_batch& orig_x, const f_batch& orig_y,
                                  local_d_x, local_d_y, local_d_z,
 
                                  blas.inv_transform);
+
+            
+            if(blas.motion_blur){
+            local_o_x -= time*blas.mb_vector.x;
+            local_o_y -= time*blas.mb_vector.y;
+            local_o_z -= time*blas.mb_vector.z;
+            }
 
 
             // Check if this is a sphere (bvh_index >= 10000) or a mesh
@@ -2727,6 +2758,13 @@ void inline intersect_tlas_any_hit(const f_batch& orig_x, const f_batch& orig_y,
 
                                  blas.inv_transform);
 
+            
+            if(blas.motion_blur){
+            local_o_x -= time*blas.mb_vector.x;
+            local_o_y -= time*blas.mb_vector.y;
+            local_o_z -= time*blas.mb_vector.z;
+            }
+
 
              if(blas.bvh_index >= 10000 && blas.bvh_index < 11000) { // <-- MODIFIED SPHERE CHECK
 
@@ -2883,7 +2921,7 @@ void inline intersect_tlas_any_hit(const f_batch& orig_x, const f_batch& orig_y,
 
                                t_max, is_occluded, scene, 
 
-                               node.left_child_index, active_mask, epsilon);
+                               node.left_child_index, active_mask, epsilon, time);
 
         
 
@@ -2894,7 +2932,7 @@ void inline intersect_tlas_any_hit(const f_batch& orig_x, const f_batch& orig_y,
 
                                t_max, is_occluded, scene, 
 
-                               node.left_child_index + 1, active_mask, epsilon);
+                               node.left_child_index + 1, active_mask, epsilon, time);
 
     }
 
@@ -2959,6 +2997,8 @@ void inline intersect_tlas_any_hit_wrapper(RP8& ray_pack, const Scene& scene,
 
     f_batch orig_z = xs::load(&ray_pack.o_z[0]);
 
+    f_batch time = xs::load(ray_pack.time);
+
 
     const fl epsilon = scene.intersection_test_epsilon;
 
@@ -2977,7 +3017,7 @@ void inline intersect_tlas_any_hit_wrapper(RP8& ray_pack, const Scene& scene,
 
                            t_max, is_occluded, scene, 0, // 0 = root node
 
-                           active_mask, epsilon);
+                           active_mask, epsilon, time);
 
 
     // Test all planes for occlusion

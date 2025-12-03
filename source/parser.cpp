@@ -109,7 +109,7 @@ public:
         scene.shadow_ray_epsilon = std::stof(sceneData.contains("ShadowRayEpsilon") ? 
             sceneData.at("ShadowRayEpsilon").get<std::string>() : "1e-3");
         scene.intersection_test_epsilon = std::stof(sceneData.contains("IntersectionTestEpsilon") ? 
-            sceneData.at("IntersectionTestEpsilon").get<std::string>() : "1e-6");
+            sceneData.at("IntersectionTestEpsilon").get<std::string>() : "1e-15");
         
         // **FIXED**: Correctly parse MaxRecursionDepth from a string.
         scene.max_recursion_depth = std::stoi(sceneData.contains("MaxRecursionDepth") ? 

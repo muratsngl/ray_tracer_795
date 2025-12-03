@@ -1502,9 +1502,16 @@ void inline shade_iterative(RP8& ray_pack, const Scene& scene, ColorBlock& color
                         calculate_reflection_direction(incident_dx, incident_dy, incident_dz,
                                                        use_normal_x, use_normal_y, use_normal_z,
                                                        reflect_dx, reflect_dy, reflect_dz); // Helper function assumed correct
-                        ray_pack.d_x[i] = reflect_dx;
-                        ray_pack.d_y[i] = reflect_dy;
-                        ray_pack.d_z[i] = reflect_dz;
+                        
+                        if (mat.roughness > 0.0f) {
+                            calculate_glossy_reflection(reflect_dx, reflect_dy, reflect_dz,
+                                                       mat.roughness,
+                                                       ray_pack.d_x[i], ray_pack.d_y[i], ray_pack.d_z[i]);
+                        } else {
+                            ray_pack.d_x[i] = reflect_dx;
+                            ray_pack.d_y[i] = reflect_dy;
+                            ray_pack.d_z[i] = reflect_dz;
+                        }
                         ray_pack.o_x[i] = hit_pos_x.get(i) + use_normal_x * scene.shadow_ray_epsilon; // Offset origin
                         ray_pack.o_y[i] = hit_pos_y.get(i) + use_normal_y * scene.shadow_ray_epsilon;
                         ray_pack.o_z[i] = hit_pos_z.get(i) + use_normal_z * scene.shadow_ray_epsilon;
@@ -1525,6 +1532,16 @@ void inline shade_iterative(RP8& ray_pack, const Scene& scene, ColorBlock& color
                                                            use_normal_x, use_normal_y, use_normal_z,
                                                            n1, n2, cos_theta, cos_phi,
                                                            refract_dx, refract_dy, refract_dz); // Helper function assumed correct
+
+                            if (mat.roughness > 0.0f) {
+                                fl glossy_refract_dx, glossy_refract_dy, glossy_refract_dz;
+                                calculate_glossy_reflection(refract_dx, refract_dy, refract_dz,
+                                                           mat.roughness,
+                                                           glossy_refract_dx, glossy_refract_dy, glossy_refract_dz);
+                                refract_dx = glossy_refract_dx;
+                                refract_dy = glossy_refract_dy;
+                                refract_dz = glossy_refract_dz;
+                            }
 
                             // Offset origin *against* normal to go inside
                             fl refract_ox = hit_pos_x.get(i) - use_normal_x * scene.shadow_ray_epsilon;
@@ -1554,9 +1571,16 @@ void inline shade_iterative(RP8& ray_pack, const Scene& scene, ColorBlock& color
                             calculate_reflection_direction(incident_dx, incident_dy, incident_dz,
                                                            use_normal_x, use_normal_y, use_normal_z, // use_normal points "in"
                                                            reflect_dx, reflect_dy, reflect_dz);
-                            ray_pack.d_x[i] = reflect_dx;
-                            ray_pack.d_y[i] = reflect_dy;
-                            ray_pack.d_z[i] = reflect_dz;
+                            
+                            if (mat.roughness > 0.0f) {
+                                calculate_glossy_reflection(reflect_dx, reflect_dy, reflect_dz,
+                                                           mat.roughness,
+                                                           ray_pack.d_x[i], ray_pack.d_y[i], ray_pack.d_z[i]);
+                            } else {
+                                ray_pack.d_x[i] = reflect_dx;
+                                ray_pack.d_y[i] = reflect_dy;
+                                ray_pack.d_z[i] = reflect_dz;
+                            }
                             // Offset origin along use_normal (points back into medium)
                             ray_pack.o_x[i] = hit_pos_x.get(i) + use_normal_x * scene.shadow_ray_epsilon;
                             ray_pack.o_y[i] = hit_pos_y.get(i) + use_normal_y * scene.shadow_ray_epsilon;
@@ -1578,6 +1602,16 @@ void inline shade_iterative(RP8& ray_pack, const Scene& scene, ColorBlock& color
                                 calculate_reflection_direction(incident_dx, incident_dy, incident_dz,
                                                                use_normal_x, use_normal_y, use_normal_z, // use_normal points "in"
                                                                reflect_dx, reflect_dy, reflect_dz);
+
+                                if (mat.roughness > 0.0f) {
+                                    fl glossy_reflect_dx, glossy_reflect_dy, glossy_reflect_dz;
+                                    calculate_glossy_reflection(reflect_dx, reflect_dy, reflect_dz,
+                                                               mat.roughness,
+                                                               glossy_reflect_dx, glossy_reflect_dy, glossy_reflect_dz);
+                                    reflect_dx = glossy_reflect_dx;
+                                    reflect_dy = glossy_reflect_dy;
+                                    reflect_dz = glossy_reflect_dz;
+                                }
 
                                 // Origin offset along use_normal (points back into medium)
                                 fl reflect_ox = hit_pos_x.get(i) + use_normal_x * scene.shadow_ray_epsilon;
@@ -1605,9 +1639,15 @@ void inline shade_iterative(RP8& ray_pack, const Scene& scene, ColorBlock& color
                                                                refract_dx, refract_dy, refract_dz);
 
                                 // Update ray packet IN PLACE with refracted ray
-                                ray_pack.d_x[i] = refract_dx;
-                                ray_pack.d_y[i] = refract_dy;
-                                ray_pack.d_z[i] = refract_dz;
+                                if (mat.roughness > 0.0f) {
+                                    calculate_glossy_reflection(refract_dx, refract_dy, refract_dz,
+                                                               mat.roughness,
+                                                               ray_pack.d_x[i], ray_pack.d_y[i], ray_pack.d_z[i]);
+                                } else {
+                                    ray_pack.d_x[i] = refract_dx;
+                                    ray_pack.d_y[i] = refract_dy;
+                                    ray_pack.d_z[i] = refract_dz;
+                                }
                                 // Offset against effective normal (use_normal points into medium, offset "out")
                                 ray_pack.o_x[i] = hit_pos_x.get(i) - use_normal_x * scene.shadow_ray_epsilon;
                                 ray_pack.o_y[i] = hit_pos_y.get(i) - use_normal_y * scene.shadow_ray_epsilon;

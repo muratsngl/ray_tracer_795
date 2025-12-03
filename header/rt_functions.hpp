@@ -168,583 +168,13 @@ void inline transform_hit_results(const f_batch& local_hit_x, const f_batch& loc
 
 }
 
-void inline intersect_planes(const f_batch& dir_x,
 
-    const f_batch& dir_y,
 
-    const f_batch& dir_z,
 
-    const f_batch& orig_x,
 
-    const f_batch& orig_y,
 
-    const f_batch& orig_z,
 
-    f_batch& t_min,
 
-    i_batch& mat_id,
-
-    // Add normal output batches
-
-    f_batch& norm_x_out,
-
-    f_batch& norm_y_out,
-
-    f_batch& norm_z_out,
-
-    const PlaneData& planes, const VertexData& vertices, const Scene& scene, int plane_ID) {
-
-
-    // 1. Get plane data (normal N, point P0) and broadcast to 8-wide batches
-
-    auto norm_x = xs::broadcast(planes.plane_norm_x[plane_ID]);
-
-    auto norm_y = xs::broadcast(planes.plane_norm_y[plane_ID]);
-
-    auto norm_z = xs::broadcast(planes.plane_norm_z[plane_ID]);
-
-
-    int p_v_id = planes.plane_point_vertex_id[plane_ID];
-
-    auto p0_x = xs::broadcast(vertices.v_pos_x[p_v_id]);
-
-    auto p0_y = xs::broadcast(vertices.v_pos_y[p_v_id]);
-
-    auto p0_z = xs::broadcast(vertices.v_pos_z[p_v_id]);
-
-
-    // 2. Calculate denominator: denom = dot(RayDirection, PlaneNormal)
-
-    auto denom = (dir_x * norm_x) + (dir_y * norm_y) + (dir_z * norm_z);
-
-
-    // 3. Epsilon check for parallel rays
-
-    const fl epsilon = scene.intersection_test_epsilon;
-
-    b_batch active_mask = (xs::abs(denom) > epsilon);
-
-
-    if (xs::none(active_mask)) {
-
-        return; // All 8 rays are parallel to the plane
-
-    }
-
-
-    // 4. Calculate numerator: numer = dot(PlanePoint - RayOrigin, PlaneNormal)
-
-    auto p0_minus_o_x = p0_x - orig_x;
-
-    auto p0_minus_o_y = p0_y - orig_y;
-
-    auto p0_minus_o_z = p0_z - orig_z;
-
-
-    auto numer = (p0_minus_o_x * norm_x) + (p0_minus_o_y * norm_y) + (p0_minus_o_z * norm_z);
-
-
-    // 5. Calculate t = numer / denom
-
-    auto t_new = numer / denom;
-
-
-    // 6. Create final hit mask
-
-    b_batch final_hit_mask = active_mask & (t_new > epsilon) & (t_new < t_min);
-
-
-    if (xs::none(final_hit_mask)) {
-
-        return; // No new valid hits
-
-    }
-
-
-    // --- Update Hit Information ---
-
-
-    // 7. Update normals for the rays that hit
-
-    // The normal is constant for the entire plane
-
-    norm_x_out = xs::select(final_hit_mask, norm_x, norm_x_out);
-
-    norm_y_out = xs::select(final_hit_mask, norm_y, norm_y_out);
-
-    norm_z_out = xs::select(final_hit_mask, norm_z, norm_z_out);
-
-
-    // 8. Update t_min for the rays that hit
-
-    t_min = xs::select(final_hit_mask, t_new, t_min);
-
-
-    // 9. Update material ID for the rays that hit
-
-    auto int_mask = xs::batch_bool_cast<int32_t>(final_hit_mask);
-
-    i_batch plane_mat_id_batch = xs::broadcast(planes.plane_material_id[plane_ID]);
-
-    mat_id = xs::select(int_mask, plane_mat_id_batch, mat_id);
-
-}
-
-
-void inline intersect_spheres(
-
-    const f_batch& dir_x,
-
-    const f_batch& dir_y,
-
-    const f_batch& dir_z,
-
-    const f_batch& orig_x,
-
-    const f_batch& orig_y,
-
-    const f_batch& orig_z,
-
-    f_batch& t_min,
-
-    i_batch& mat_id,
-
-    // Add normal output batches
-
-    f_batch& norm_x_out,
-
-    f_batch& norm_y_out,
-
-    f_batch& norm_z_out,
-
-    const SphereData& spheres, const VertexData& vertices, const Scene& scene, const int Sphere_ID) {
-
-
-    int center_vertex_id = spheres.sphere_center_vertex_id[Sphere_ID];
-
-    auto sphere_center_x = xs::broadcast(vertices.v_pos_x[center_vertex_id]);
-
-    auto sphere_center_y = xs::broadcast(vertices.v_pos_y[center_vertex_id]);
-
-    auto sphere_center_z = xs::broadcast(vertices.v_pos_z[center_vertex_id]);
-
-    auto sphere_radius_sq = xs::broadcast(spheres.sphere_radius_sq[Sphere_ID]);
-
-
-    auto oc_x = orig_x - sphere_center_x;
-
-    auto oc_y = orig_y - sphere_center_y;
-
-    auto oc_z = orig_z - sphere_center_z;
-
-
-    // --- FIX: Handle non-normalized rays ---
-
-    // A = D · D
-
-    auto a = (dir_x * dir_x) + (dir_y * dir_y) + (dir_z * dir_z);
-
-    // b = D · (O - C)
-
-    auto b_half = (dir_x * oc_x) + (dir_y * oc_y) + (dir_z * oc_z);
-
-    // C = (O - C) · (O - C) - r^2
-
-    auto c = (oc_x * oc_x) + (oc_y * oc_y) + (oc_z * oc_z) - sphere_radius_sq;
-
-    // Discriminant = b^2 - AC
-
-    auto discriminant = (b_half * b_half) - (a * c);
-
-    // --- END FIX ---
-
-
-    b_batch hit_mask = (discriminant >= 0.f);
-
-
-    if (xs::none(hit_mask)) {
-
-        return;
-
-    }
-
-
-    auto sqrt_discriminant = xs::sqrt(discriminant);
-
-
-    // --- FIX: Divide by 'a' ---
-
-    b_batch valid_a = (xs::abs(a) > 1e-8f);
-
-    auto inv_a = xs::select(valid_a, 1.0f / a, f_batch(0.0f));
-
-    auto t0 = (-b_half - sqrt_discriminant) * inv_a;
-
-    auto t1 = (-b_half + sqrt_discriminant) * inv_a;
-
-    // --- END FIX ---
-
-
-    auto t_smaller = xs::min(t0, t1);
-
-    auto t_larger = xs::max(t0, t1);
-
-
-    const fl epsilon = scene.intersection_test_epsilon;
-
-
-    auto t_new = xs::select(t_smaller > epsilon, t_smaller, t_larger);
-
-
-    b_batch final_hit_mask = hit_mask & (t_new > epsilon) & (t_new < t_min);
-
-
-    if (xs::none(final_hit_mask)) {
-
-        return;
-
-    }
-
-
-    // --- Update Hit Information ---
-
-    
-
-    // 1. Calculate hit point: P = O + t*D
-
-    auto hit_x = orig_x + t_new * dir_x;
-
-    auto hit_y = orig_y + t_new * dir_y;
-
-    auto hit_z = orig_z + t_new * dir_z;
-
-
-    // 2. Calculate normal: N = (P - C) / R
-
-    auto n_x = hit_x - sphere_center_x;
-
-    auto n_y = hit_y - sphere_center_y;
-
-    auto n_z = hit_z - sphere_center_z;
-
-
-    // 3. Normalize
-
-    auto radius = xs::sqrt(sphere_radius_sq);
-
-    f_batch epsilon_batch(1e-8f);
-
-    b_batch radius_valid = (radius > epsilon_batch);
-
-    auto inv_radius = xs::select(radius_valid, 1.0f / radius, f_batch(0.0f));
-
-    
-
-    auto new_norm_x = n_x * inv_radius;
-
-    auto new_norm_y = n_y * inv_radius;
-
-    auto new_norm_z = n_z * inv_radius;
-
-
-    // 4. Conditionally store the new normal
-
-    norm_x_out = xs::select(final_hit_mask, new_norm_x, norm_x_out);
-
-    norm_y_out = xs::select(final_hit_mask, new_norm_y, norm_y_out);
-
-    norm_z_out = xs::select(final_hit_mask, new_norm_z, norm_z_out);
-
-
-    // 5. Update t_min
-
-    t_min = xs::select(final_hit_mask, t_new, t_min);
-
-
-    // 6. Update material ID
-
-    auto int_mask = xs::batch_bool_cast<int32_t>(final_hit_mask);
-
-    i_batch sphere_id_batch = xs::broadcast(spheres.sphere_mat_id[Sphere_ID]);
-
-    mat_id = xs::select(int_mask, sphere_id_batch, mat_id);
-
-}
-
-
-void inline intersect_triangles(
-
-    const f_batch& dir_x,
-
-    const f_batch& dir_y,
-
-    const f_batch& dir_z,
-
-    const f_batch& orig_x,
-
-    const f_batch& orig_y,
-
-    const f_batch& orig_z,
-
-    f_batch& t_min,
-
-    i_batch& mat_id,
-
-    // Add normal output batches
-
-    f_batch& norm_x_out,
-
-    f_batch& norm_y_out,
-
-    f_batch& norm_z_out,
-
-    const TriangleData& triangles, const VertexData& vertices, const Scene& scene, const int Triangle_ID) {
-
-
-
-    // Get vertex indices
-
-    int i0 = triangles.v0_ind[Triangle_ID];
-
-    int i1 = triangles.v1_ind[Triangle_ID];
-
-    int i2 = triangles.v2_ind[Triangle_ID];
-
-
-    // Get triangle normal for backface culling
-
-    auto tri_norm_x = xs::broadcast(triangles.tri_norm_x[Triangle_ID]);
-
-    auto tri_norm_y = xs::broadcast(triangles.tri_norm_y[Triangle_ID]);
-
-    auto tri_norm_z = xs::broadcast(triangles.tri_norm_z[Triangle_ID]);
-
-    
-
-    // Backface culling: dot(normal, ray_direction) should be negative (facing camera)
-
-    auto dot_normal_ray = (tri_norm_x * dir_x) + (tri_norm_y * dir_y) + (tri_norm_z * dir_z);
-
-    b_batch backface_mask = (dot_normal_ray < 0.0f);
-
-    
-
-    if (xs::none(backface_mask)) {
-
-        return; // All rays are hitting backfaces, skip this triangle
-
-    }
-
-
-    // Get vertex positions
-
-    Vec3f a = { vertices.v_pos_x[i0], vertices.v_pos_y[i0], vertices.v_pos_z[i0] };
-
-    Vec3f b = { vertices.v_pos_x[i1], vertices.v_pos_y[i1], vertices.v_pos_z[i1] };
-
-    Vec3f c = { vertices.v_pos_x[i2], vertices.v_pos_y[i2], vertices.v_pos_z[i2] };
-
-
-    // Get vertex normals
-
-    auto v0_norm_x = xs::broadcast(vertices.v_nor_x[i0]);
-
-    auto v0_norm_y = xs::broadcast(vertices.v_nor_y[i0]);
-
-    auto v0_norm_z = xs::broadcast(vertices.v_nor_z[i0]);
-
-    auto v1_norm_x = xs::broadcast(vertices.v_nor_x[i1]);
-
-    auto v1_norm_y = xs::broadcast(vertices.v_nor_y[i1]);
-
-    auto v1_norm_z = xs::broadcast(vertices.v_nor_z[i1]);
-
-    auto v2_norm_x = xs::broadcast(vertices.v_nor_x[i2]);
-
-    auto v2_norm_y = xs::broadcast(vertices.v_nor_y[i2]);
-
-    auto v2_norm_z = xs::broadcast(vertices.v_nor_z[i2]);
-
-
-    // Calculate edges
-
-    Vec3f e1_scalar = b - a;
-
-    Vec3f e2_scalar = c - a;
-
-
-    // Broadcast edges to 8-wide batches
-
-    auto e1_x = xs::broadcast(e1_scalar.x);
-
-    auto e1_y = xs::broadcast(e1_scalar.y);
-
-    auto e1_z = xs::broadcast(e1_scalar.z);
-
-
-    auto e2_x = xs::broadcast(e2_scalar.x);
-
-    auto e2_y = xs::broadcast(e2_scalar.y);
-
-    auto e2_z = xs::broadcast(e2_scalar.z);
-
-
-    // pvec = cross(dir, e2)
-
-    auto pvec_x = dir_y * e2_z - dir_z * e2_y;
-
-    auto pvec_y = dir_z * e2_x - dir_x * e2_z;
-
-    auto pvec_z = dir_x * e2_y - dir_y * e2_x;
-
-
-    // det = dot(e1, pvec)
-
-    auto det = e1_x * pvec_x + e1_y * pvec_y + e1_z * pvec_z;
-
-
-    // Epsilon check - use absolute value to allow both front and back facing triangles
-
-    const fl epsilon = 1e-12f;
-
-    
-
-    // --- FIX 1: Define a slightly larger epsilon for barycentric coordinates ---
-
-    const fl bary_epsilon = 1e-5f; // MUCH more forgiving (was 1e-5f)
-
-    f_batch zero_batch(0.0f);
-
-    f_batch one_batch(1.0f);
-
-    // --- END FIX 1 ---
-
-
-    // Check determinant using abs() to disable backface culling
-
-    b_batch active_mask = (det > epsilon);
-
-
-    if (xs::none(active_mask)) {
-
-        return;
-
-    }
-
-
-    // Safe division - only divide where det is valid
-
-    auto invDet = xs::select(active_mask, 1.0f / det, f_batch(0.0f));
-
-
-    // tvec = orig - a
-
-    auto a_x = xs::broadcast(a.x);
-
-    auto a_y = xs::broadcast(a.y);
-
-    auto a_z = xs::broadcast(a.z);
-
-    auto tvec_x = orig_x - a_x;
-
-    auto tvec_y = orig_y - a_y;
-
-    auto tvec_z = orig_z - a_z;
-
-
-    // u = dot(tvec, pvec) * invDet
-
-    auto u = (tvec_x * pvec_x + tvec_y * pvec_y + tvec_z * pvec_z) * invDet;
-
-
-    // Mask out rays with invalid barycentric coord u
-
-    active_mask = active_mask & (u >= zero_batch - bary_epsilon) & (u <= one_batch + bary_epsilon);
-
-    if (xs::none(active_mask)) return;
-
-
-    // qvec = cross(tvec, e1)
-
-    auto qvec_x = tvec_y * e1_z - tvec_z * e1_y;
-
-    auto qvec_y = tvec_z * e1_x - tvec_x * e1_z;
-
-    auto qvec_z = tvec_x * e1_y - tvec_y * e1_x;
-
-
-    // v = dot(dir, qvec) * invDet
-
-    auto v = (dir_x * qvec_x + dir_y * qvec_y + dir_z * qvec_z) * invDet;
-
-
-    // Mask out rays with invalid barycentric coord v
-
-    active_mask = active_mask & (v >= zero_batch - bary_epsilon) & (u + v <= one_batch + bary_epsilon);
-
-    if (xs::none(active_mask)) return;
-
-
-    // t = dot(e2, qvec) * invDet
-
-    auto t_new = (e2_x * qvec_x + e2_y * qvec_y + e2_z * qvec_z) * invDet;
-
-
-    // Final mask: active, t > scene epsilon, and t < t_min
-
-    b_batch final_hit_mask = active_mask & (t_new > epsilon) & (t_new < t_min);
-
-
-    if (xs::none(final_hit_mask)) {
-
-        return;
-
-    }
-
-
-    // --- Update Hit Information ---
-
-    // Compute the normal (smooth or flat)
-
-    auto w = one_batch - u - v;
-
-    auto interp_norm_x = w * v0_norm_x + u * v1_norm_x + v * v2_norm_x;
-
-    auto interp_norm_y = w * v0_norm_y + u * v1_norm_y + v * v2_norm_y;
-
-    auto interp_norm_z = w * v0_norm_z + u * v1_norm_z + v * v2_norm_z;
-
-
-    auto new_norm_x = G_SMOOTH_SHADING_ENABLED ? interp_norm_x : tri_norm_x;
-
-    auto new_norm_y = G_SMOOTH_SHADING_ENABLED ? interp_norm_y : tri_norm_y;
-
-    auto new_norm_z = G_SMOOTH_SHADING_ENABLED ? interp_norm_z : tri_norm_z;
-
-
-    // 2. Conditionally store the normal
-
-    norm_x_out = xs::select(final_hit_mask, new_norm_x, norm_x_out);
-
-    norm_y_out = xs::select(final_hit_mask, new_norm_y, norm_y_out);
-
-    norm_z_out = xs::select(final_hit_mask, new_norm_z, norm_z_out);
-
-
-    // 3. Update t_min
-
-    t_min = xs::select(final_hit_mask, t_new, t_min);
-
-
-    // 4. Update material ID
-
-    auto int_mask = xs::batch_bool_cast<int32_t>(final_hit_mask);
-
-    auto mat_id_batch = xs::broadcast(triangles.triangle_material_id[Triangle_ID]);
-
-    mat_id = xs::select(int_mask, mat_id_batch, mat_id);
-
-}
 
 
 
@@ -1207,23 +637,8 @@ void inline intersect_triangles_masked(
 
     auto tri_norm_z = xs::broadcast(triangles.tri_norm_z[Triangle_ID]);
 
-    
-
-    // 2. Backface culling: combine incoming mask with backface check
-
-    auto dot_normal_ray = (tri_norm_x * dir_x) + (tri_norm_y * dir_y) + (tri_norm_z * dir_z);
-
-    b_batch backface_mask = (dot_normal_ray < 0.0f);
-
-    b_batch tri_active_mask = active_mask ;
-
-    
-
-    if (xs::none(tri_active_mask)) {
-
-        return; // All active rays are hitting backfaces
-
-    }
+    // 2. Backface culling removed
+    b_batch tri_active_mask = active_mask;
 
 
     // Get vertex positions
@@ -1294,9 +709,9 @@ void inline intersect_triangles_masked(
 
     // Epsilon checks
 
-    const fl epsilon = 1e-12f;
+    const fl epsilon = scene.intersection_test_epsilon;
 
-    const fl bary_epsilon = 1e-5f;
+    const fl bary_epsilon = scene.intersection_test_epsilon;
 
     f_batch zero_batch(0.0f);
 
@@ -1305,7 +720,7 @@ void inline intersect_triangles_masked(
 
     // 3. Check determinant (and combine with active mask)
 
-    b_batch det_mask = (det > epsilon);
+    b_batch det_mask = (xs::abs(det) > epsilon);
 
     tri_active_mask = tri_active_mask & det_mask;
 
@@ -1648,27 +1063,27 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
 
 
             // Transform ray to BLAS local space
-            // Apply motion blur: world_origin -= time*mb BEFORE transforming
-            f_batch world_o_mb_x = orig_x;
-            f_batch world_o_mb_y = orig_y;
-            f_batch world_o_mb_z = orig_z;
-            if(blas.motion_blur){
-                world_o_mb_x -= time*blas.mb_vector.x;
-                world_o_mb_y -= time*blas.mb_vector.y;
-                world_o_mb_z -= time*blas.mb_vector.z;
-            }
 
             f_batch local_o_x, local_o_y, local_o_z;
 
             f_batch local_d_x, local_d_y, local_d_z;
 
-            transform_ray_packet(world_o_mb_x, world_o_mb_y, world_o_mb_z, dir_x, dir_y, dir_z,
+            transform_ray_packet(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z,
 
                                  local_o_x, local_o_y, local_o_z,
 
                                  local_d_x, local_d_y, local_d_z,
 
                                  blas.inv_transform);
+
+            
+            
+            
+            if(blas.motion_blur){
+            local_o_x -= time*blas.mb_vector.x;
+            local_o_y -= time*blas.mb_vector.y;
+            local_o_z -= time*blas.mb_vector.z;
+            }
             
 
 
@@ -1765,6 +1180,11 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
                 f_batch local_hit_y = local_o_y + local_t_min * local_d_y;
 
                 f_batch local_hit_z = local_o_z + local_t_min * local_d_z;
+                if(blas.motion_blur){
+                    local_hit_x += time*blas.mb_vector.x;
+                    local_hit_y += time*blas.mb_vector.y;
+                    local_hit_z += time*blas.mb_vector.z;
+                }
 
                 // Transform hit point and normal back to world space
 
@@ -1783,12 +1203,6 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
 
                                       blas.transformation_matrix); // Use forward transform
 
-                // Apply motion blur: add time*mb to world hit position
-                if(blas.motion_blur){
-                    world_hit_x += time*blas.mb_vector.x;
-                    world_hit_y += time*blas.mb_vector.y;
-                    world_hit_z += time*blas.mb_vector.z;
-                }
 
                 // Conditionally update the final world-space hit info
 
@@ -1824,27 +1238,22 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
             const BLAS& blas = blas_list[node.blas_id_1];
 
 
-            // Apply motion blur: world_origin -= time*mb BEFORE transforming
-            f_batch world_o_mb_x = orig_x;
-            f_batch world_o_mb_y = orig_y;
-            f_batch world_o_mb_z = orig_z;
-            if(blas.motion_blur){
-                world_o_mb_x -= time*blas.mb_vector.x;
-                world_o_mb_y -= time*blas.mb_vector.y;
-                world_o_mb_z -= time*blas.mb_vector.z;
-            }
-            
             f_batch local_o_x, local_o_y, local_o_z;
 
             f_batch local_d_x, local_d_y, local_d_z;
 
-            transform_ray_packet(world_o_mb_x, world_o_mb_y, world_o_mb_z, dir_x, dir_y, dir_z,
+            transform_ray_packet(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z,
 
                                  local_o_x, local_o_y, local_o_z,
 
                                  local_d_x, local_d_y, local_d_z,
 
                                  blas.inv_transform);
+            if(blas.motion_blur){
+            local_o_x -= time*blas.mb_vector.x;
+            local_o_y -= time*blas.mb_vector.y;
+            local_o_z -= time*blas.mb_vector.z;
+            }
             
             f_batch local_t_min = t_min;
 
@@ -1934,6 +1343,11 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
                 f_batch local_hit_y = local_o_y + local_t_min * local_d_y;
 
                 f_batch local_hit_z = local_o_z + local_t_min * local_d_z;
+                 if(blas.motion_blur){
+                    local_hit_x += time*blas.mb_vector.x;
+                    local_hit_y += time*blas.mb_vector.y;
+                    local_hit_z += time*blas.mb_vector.z;
+                }
 
                 f_batch world_hit_x, world_hit_y, world_hit_z;
 
@@ -1949,12 +1363,6 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
 
                                       blas.transformation_matrix);
 
-                // Apply motion blur: add time*mb to world hit position
-                if(blas.motion_blur){
-                    world_hit_x += time*blas.mb_vector.x;
-                    world_hit_y += time*blas.mb_vector.y;
-                    world_hit_z += time*blas.mb_vector.z;
-                }
 
                 t_min = xs::select(new_hit_mask, local_t_min, t_min);
 
@@ -2561,27 +1969,25 @@ void inline intersect_tlas_any_hit(const f_batch& orig_x, const f_batch& orig_y,
 
             const BLAS& blas = blas_list[node.blas_id_0];
 
-            // Apply motion blur: world_origin -= time*mb BEFORE transforming
-            f_batch world_o_mb_x = orig_x;
-            f_batch world_o_mb_y = orig_y;
-            f_batch world_o_mb_z = orig_z;
-            if(blas.motion_blur){
-                world_o_mb_x -= time*blas.mb_vector.x;
-                world_o_mb_y -= time*blas.mb_vector.y;
-                world_o_mb_z -= time*blas.mb_vector.z;
-            }
 
             f_batch local_o_x, local_o_y, local_o_z;
 
             f_batch local_d_x, local_d_y, local_d_z;
 
-            transform_ray_packet(world_o_mb_x, world_o_mb_y, world_o_mb_z, dir_x, dir_y, dir_z,
+            transform_ray_packet(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z,
 
                                  local_o_x, local_o_y, local_o_z,
 
                                  local_d_x, local_d_y, local_d_z,
 
                                  blas.inv_transform);
+
+            
+            if(blas.motion_blur){
+            local_o_x -= time*blas.mb_vector.x;
+            local_o_y -= time*blas.mb_vector.y;
+            local_o_z -= time*blas.mb_vector.z;
+            }
 
 
             // Check if this is a sphere (bvh_index >= 10000) or a mesh
@@ -2754,27 +2160,25 @@ void inline intersect_tlas_any_hit(const f_batch& orig_x, const f_batch& orig_y,
 
             const BLAS& blas = blas_list[node.blas_id_1];
 
-            // Apply motion blur: world_origin -= time*mb BEFORE transforming
-            f_batch world_o_mb_x = orig_x;
-            f_batch world_o_mb_y = orig_y;
-            f_batch world_o_mb_z = orig_z;
-            if(blas.motion_blur){
-                world_o_mb_x -= time*blas.mb_vector.x;
-                world_o_mb_y -= time*blas.mb_vector.y;
-                world_o_mb_z -= time*blas.mb_vector.z;
-            }
 
             f_batch local_o_x, local_o_y, local_o_z;
 
             f_batch local_d_x, local_d_y, local_d_z;
 
-            transform_ray_packet(world_o_mb_x, world_o_mb_y, world_o_mb_z, dir_x, dir_y, dir_z,
+            transform_ray_packet(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z,
 
                                  local_o_x, local_o_y, local_o_z,
 
                                  local_d_x, local_d_y, local_d_z,
 
                                  blas.inv_transform);
+
+            
+            if(blas.motion_blur){
+            local_o_x -= time*blas.mb_vector.x;
+            local_o_y -= time*blas.mb_vector.y;
+            local_o_z -= time*blas.mb_vector.z;
+            }
 
 
              if(blas.bvh_index >= 10000 && blas.bvh_index < 11000) { // <-- MODIFIED SPHERE CHECK

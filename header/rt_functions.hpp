@@ -1648,27 +1648,27 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
 
 
             // Transform ray to BLAS local space
+            // Apply motion blur: world_origin -= time*mb BEFORE transforming
+            f_batch world_o_mb_x = orig_x;
+            f_batch world_o_mb_y = orig_y;
+            f_batch world_o_mb_z = orig_z;
+            if(blas.motion_blur){
+                world_o_mb_x -= time*blas.mb_vector.x;
+                world_o_mb_y -= time*blas.mb_vector.y;
+                world_o_mb_z -= time*blas.mb_vector.z;
+            }
 
             f_batch local_o_x, local_o_y, local_o_z;
 
             f_batch local_d_x, local_d_y, local_d_z;
 
-            transform_ray_packet(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z,
+            transform_ray_packet(world_o_mb_x, world_o_mb_y, world_o_mb_z, dir_x, dir_y, dir_z,
 
                                  local_o_x, local_o_y, local_o_z,
 
                                  local_d_x, local_d_y, local_d_z,
 
                                  blas.inv_transform);
-
-            
-            
-            
-            if(blas.motion_blur){
-            local_o_x -= time*blas.mb_vector.x;
-            local_o_y -= time*blas.mb_vector.y;
-            local_o_z -= time*blas.mb_vector.z;
-            }
             
 
 
@@ -1765,11 +1765,6 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
                 f_batch local_hit_y = local_o_y + local_t_min * local_d_y;
 
                 f_batch local_hit_z = local_o_z + local_t_min * local_d_z;
-                if(blas.motion_blur){
-                    local_hit_x += time*blas.mb_vector.x;
-                    local_hit_y += time*blas.mb_vector.y;
-                    local_hit_z += time*blas.mb_vector.z;
-                }
 
                 // Transform hit point and normal back to world space
 
@@ -1788,6 +1783,12 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
 
                                       blas.transformation_matrix); // Use forward transform
 
+                // Apply motion blur: add time*mb to world hit position
+                if(blas.motion_blur){
+                    world_hit_x += time*blas.mb_vector.x;
+                    world_hit_y += time*blas.mb_vector.y;
+                    world_hit_z += time*blas.mb_vector.z;
+                }
 
                 // Conditionally update the final world-space hit info
 
@@ -1823,22 +1824,27 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
             const BLAS& blas = blas_list[node.blas_id_1];
 
 
+            // Apply motion blur: world_origin -= time*mb BEFORE transforming
+            f_batch world_o_mb_x = orig_x;
+            f_batch world_o_mb_y = orig_y;
+            f_batch world_o_mb_z = orig_z;
+            if(blas.motion_blur){
+                world_o_mb_x -= time*blas.mb_vector.x;
+                world_o_mb_y -= time*blas.mb_vector.y;
+                world_o_mb_z -= time*blas.mb_vector.z;
+            }
+            
             f_batch local_o_x, local_o_y, local_o_z;
 
             f_batch local_d_x, local_d_y, local_d_z;
 
-            transform_ray_packet(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z,
+            transform_ray_packet(world_o_mb_x, world_o_mb_y, world_o_mb_z, dir_x, dir_y, dir_z,
 
                                  local_o_x, local_o_y, local_o_z,
 
                                  local_d_x, local_d_y, local_d_z,
 
                                  blas.inv_transform);
-            if(blas.motion_blur){
-            local_o_x -= time*blas.mb_vector.x;
-            local_o_y -= time*blas.mb_vector.y;
-            local_o_z -= time*blas.mb_vector.z;
-            }
             
             f_batch local_t_min = t_min;
 
@@ -1928,11 +1934,6 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
                 f_batch local_hit_y = local_o_y + local_t_min * local_d_y;
 
                 f_batch local_hit_z = local_o_z + local_t_min * local_d_z;
-                 if(blas.motion_blur){
-                    local_hit_x += time*blas.mb_vector.x;
-                    local_hit_y += time*blas.mb_vector.y;
-                    local_hit_z += time*blas.mb_vector.z;
-                }
 
                 f_batch world_hit_x, world_hit_y, world_hit_z;
 
@@ -1948,6 +1949,12 @@ void inline intersect_tlas(const f_batch& orig_x, const f_batch& orig_y, const f
 
                                       blas.transformation_matrix);
 
+                // Apply motion blur: add time*mb to world hit position
+                if(blas.motion_blur){
+                    world_hit_x += time*blas.mb_vector.x;
+                    world_hit_y += time*blas.mb_vector.y;
+                    world_hit_z += time*blas.mb_vector.z;
+                }
 
                 t_min = xs::select(new_hit_mask, local_t_min, t_min);
 
@@ -2554,25 +2561,27 @@ void inline intersect_tlas_any_hit(const f_batch& orig_x, const f_batch& orig_y,
 
             const BLAS& blas = blas_list[node.blas_id_0];
 
+            // Apply motion blur: world_origin -= time*mb BEFORE transforming
+            f_batch world_o_mb_x = orig_x;
+            f_batch world_o_mb_y = orig_y;
+            f_batch world_o_mb_z = orig_z;
+            if(blas.motion_blur){
+                world_o_mb_x -= time*blas.mb_vector.x;
+                world_o_mb_y -= time*blas.mb_vector.y;
+                world_o_mb_z -= time*blas.mb_vector.z;
+            }
 
             f_batch local_o_x, local_o_y, local_o_z;
 
             f_batch local_d_x, local_d_y, local_d_z;
 
-            transform_ray_packet(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z,
+            transform_ray_packet(world_o_mb_x, world_o_mb_y, world_o_mb_z, dir_x, dir_y, dir_z,
 
                                  local_o_x, local_o_y, local_o_z,
 
                                  local_d_x, local_d_y, local_d_z,
 
                                  blas.inv_transform);
-
-            
-            if(blas.motion_blur){
-            local_o_x -= time*blas.mb_vector.x;
-            local_o_y -= time*blas.mb_vector.y;
-            local_o_z -= time*blas.mb_vector.z;
-            }
 
 
             // Check if this is a sphere (bvh_index >= 10000) or a mesh
@@ -2745,25 +2754,27 @@ void inline intersect_tlas_any_hit(const f_batch& orig_x, const f_batch& orig_y,
 
             const BLAS& blas = blas_list[node.blas_id_1];
 
+            // Apply motion blur: world_origin -= time*mb BEFORE transforming
+            f_batch world_o_mb_x = orig_x;
+            f_batch world_o_mb_y = orig_y;
+            f_batch world_o_mb_z = orig_z;
+            if(blas.motion_blur){
+                world_o_mb_x -= time*blas.mb_vector.x;
+                world_o_mb_y -= time*blas.mb_vector.y;
+                world_o_mb_z -= time*blas.mb_vector.z;
+            }
 
             f_batch local_o_x, local_o_y, local_o_z;
 
             f_batch local_d_x, local_d_y, local_d_z;
 
-            transform_ray_packet(orig_x, orig_y, orig_z, dir_x, dir_y, dir_z,
+            transform_ray_packet(world_o_mb_x, world_o_mb_y, world_o_mb_z, dir_x, dir_y, dir_z,
 
                                  local_o_x, local_o_y, local_o_z,
 
                                  local_d_x, local_d_y, local_d_z,
 
                                  blas.inv_transform);
-
-            
-            if(blas.motion_blur){
-            local_o_x -= time*blas.mb_vector.x;
-            local_o_y -= time*blas.mb_vector.y;
-            local_o_z -= time*blas.mb_vector.z;
-            }
 
 
              if(blas.bvh_index >= 10000 && blas.bvh_index < 11000) { // <-- MODIFIED SPHERE CHECK

@@ -512,8 +512,18 @@ public:
                     local_bbox.bbox_ymax = center_y + radius;
                     local_bbox.bbox_zmax = center_z + radius;
                     
-                    // Transform the AABB to world space
-                    blas.bbox = transform_aabb(local_bbox, transformation_matrix);
+                    // Parse motion blur if it exists
+                    if(obj.contains("MotionBlur")){
+                        blas.motion_blur = true;
+                        blas.mb_vector = parseVec3f(obj.at("MotionBlur").get<std::string>());
+                        // Expand AABB for motion blur
+                        AABB transformed_bbox = transform_aabb(local_bbox, transformation_matrix);
+                        blas.bbox = calculate_mb_box(transformed_bbox, blas.mb_vector);
+                    }
+                    else{
+                        // Transform the AABB to world space
+                        blas.bbox = transform_aabb(local_bbox, transformation_matrix);
+                    }
                     
                     // Store transforms for sphere
                     blas.transformation_matrix = transformation_matrix;
@@ -604,8 +614,18 @@ public:
                     local_bbox.bbox_ymax = std::max({v0_y, v1_y, v2_y});
                     local_bbox.bbox_zmax = std::max({v0_z, v1_z, v2_z});
                     
-                    // Transform the AABB to world space
-                    blas.bbox = transform_aabb(local_bbox, transformation_matrix);
+                    // Parse motion blur if it exists
+                    if(obj.contains("MotionBlur")){
+                        blas.motion_blur = true;
+                        blas.mb_vector = parseVec3f(obj.at("MotionBlur").get<std::string>());
+                        // Expand AABB for motion blur
+                        AABB transformed_bbox = transform_aabb(local_bbox, transformation_matrix);
+                        blas.bbox = calculate_mb_box(transformed_bbox, blas.mb_vector);
+                    }
+                    else{
+                        // Transform the AABB to world space
+                        blas.bbox = transform_aabb(local_bbox, transformation_matrix);
+                    }
                     
                     // Store transforms
                     blas.transformation_matrix = transformation_matrix;

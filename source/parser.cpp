@@ -640,9 +640,16 @@ public:
 
                     if (obj.contains("Transformations")) {
                         mesh_info.transformation_matrix = build_composite_transform(scene, obj.at("Transformations").get<std::string>());
-                    } else {
+                    } 
+                    else {
                         mesh_info.transformation_matrix = create_identity_matrix();
                     }
+                    
+                    if(obj.contains("MotionBlur")){
+                        mesh_info.motion_blur = true;
+                        mesh_info.mb_vector = parseVec3f(obj.at("MotionBlur").get<std::string>());
+                    }
+
                     
                     mesh_info.inverse_transformation_matrix = mat_inv(mesh_info.transformation_matrix);
                  
@@ -943,12 +950,17 @@ public:
                     instance_info.base_triangle_index = base_mesh_info.base_triangle_index;
                     instance_info.triangle_count = base_mesh_info.triangle_count;
                     instance_info.bvh_index = base_mesh_info.bvh_index;
+                    
 
                     Mat4f M_local = create_identity_matrix();
                     if (obj.contains("Transformations")) {
                         M_local = build_composite_transform(scene, obj.at("Transformations").get<std::string>());
                     }
-
+                    
+                    if (obj.contains("MotionBlur")){
+                        instance_info.motion_blur = true;
+                        instance_info.mb_vector = parseVec3f(obj.at("MotionBlur").get<std::string>());
+                    }
                     if (instance_info.reset_transform) {
                         instance_info.transformation_matrix = M_local;
                     } else {
@@ -956,8 +968,6 @@ public:
                     }
                     
                     instance_info.inverse_transformation_matrix = mat_inv(instance_info.transformation_matrix);
-                    
-
                     scene.mesh_data.push_back(instance_info);
                     mesh_info_map[instance_info.id] = instance_info;
                     construct_BLAS(instance_info,blas,scene);

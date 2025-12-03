@@ -1257,6 +1257,7 @@ void inline shade_iterative(RP8& ray_pack, const Scene& scene, ColorBlock& color
                     ray_pack.d_z[i] = refracted_queue.d_z.back(); refracted_queue.d_z.pop_back();
                     ray_pack.depth[i] = refracted_queue.depth.back(); refracted_queue.depth.pop_back();
                     ray_pack.pixel_index[i] = refracted_queue.pixel_index.back(); refracted_queue.pixel_index.pop_back();
+                    ray_pack.time[i] = refracted_queue.time.back(); refracted_queue.time.pop_back();
                     
                     //THESE LINES ARE PROBLEMATIC CREATES RACE CONDITIONS BETWEEN CURRENTLY SENT MIRROR RAYS AND REFRACTED RAYS.
                     //PROPOSED SOLUTION
@@ -1538,7 +1539,7 @@ void inline shade_iterative(RP8& ray_pack, const Scene& scene, ColorBlock& color
                             refracted_queue.push(refract_ox, refract_oy, refract_oz,
                                                  refract_dx, refract_dy, refract_dz,
                                                  refract_tr, refract_tg, refract_tb,
-                                                 ray_pack.depth[i], ray_pack.pixel_index[i]); // Depth increases for queued ray
+                                                 ray_pack.depth[i], ray_pack.pixel_index[i],ray_pack.time[i]); // Depth increases for queued ray
                         }
 
                     } else { // ** Exiting **
@@ -1590,7 +1591,7 @@ void inline shade_iterative(RP8& ray_pack, const Scene& scene, ColorBlock& color
                                 refracted_queue.push(reflect_ox, reflect_oy, reflect_oz,
                                                      reflect_dx, reflect_dy, reflect_dz,
                                                      reflect_tr, reflect_tg, reflect_tb,
-                                                     ray_pack.depth[i] + 1, ray_pack.pixel_index[i]); // Depth increases for queued ray
+                                                     ray_pack.depth[i] + 1, ray_pack.pixel_index[i],ray_pack.time[i]); // Depth increases for queued ray
                             }
 
                             //--- 2. Handle Refraction (Updates packet in place) ---

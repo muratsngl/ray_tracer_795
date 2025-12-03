@@ -11,7 +11,17 @@ inline std::vector<BLAS> blas_list;
 // NEW: Global list to store and partition BLAS indices, mirroring bvh.prim_indices
 inline std::vector<int> tlas_blas_indices; 
 
+inline AABB calculate_mb_box(const AABB& bbox,const Vec3f& mb_vector){
+    AABB bboxr;
+    bboxr.bbox_xmin = std::min(bbox.bbox_xmin,bbox.bbox_xmin+mb_vector.x);
+    bboxr.bbox_ymin = std::min(bbox.bbox_ymin,bbox.bbox_ymin+mb_vector.y);
+    bboxr.bbox_zmin = std::min(bbox.bbox_zmin,bbox.bbox_zmin+mb_vector.z);
 
+    bboxr.bbox_xmax = std::max(bbox.bbox_xmax,bbox.bbox_xmax+mb_vector.x);
+    bboxr.bbox_ymax = std::max(bbox.bbox_ymax,bbox.bbox_ymax+mb_vector.y);
+    bboxr.bbox_zmax = std::max(bbox.bbox_zmax,bbox.bbox_zmax+mb_vector.z);
+    return bboxr;
+}   
 
 inline fl calculate_surface_area(const AABB& bbox) {
     fl dx = bbox.bbox_xmax - bbox.bbox_xmin;
@@ -294,9 +304,24 @@ inline void construct_BVH(const MeshInfo& mesh,BVH& bvh,const Scene& scene ){
 inline void construct_BLAS(const MeshInfo& mesh,BLAS& blas,const Scene& scene){
     const auto& bvh = bvh_list[mesh.bvh_index];
     const auto& bvh_bbox = bvh.bvh_node_list[0].bbox;
+    
+    // Always set transformation matrices (needed for ray transformation)
     blas.inv_transform = mesh.inverse_transformation_matrix;
     blas.transformation_matrix = mesh.transformation_matrix;
-    blas.bbox = transform_aabb(bvh_bbox,mesh.transformation_matrix);
+    
+    if(!mesh.motion_blur)
+    {
+        blas.bbox = transform_aabb(bvh_bbox, mesh.transformation_matrix);
+    }
+    else{
+        blas.mb_vector = mesh.mb_vector;
+        blas.motion_blur = mesh.motion_blur;
+        // Apply transformation first, then expand for motion blur
+        AABB transformed_bbox = transform_aabb(bvh_bbox, mesh.transformation_matrix);
+        blas.bbox = calculate_mb_box(transformed_bbox, blas.mb_vector);
+    }
+    
+    
     blas.bvh_index = mesh.bvh_index;
     blas.material_id = mesh.material_id;
     }

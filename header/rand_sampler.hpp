@@ -42,6 +42,7 @@ inline void jitter_sample(int n_sqrt,std::vector<RP8>& sample_packs,const RP8& r
                     new_pack.d_x[k] = d.x;
                     new_pack.d_y[k] = d.y;
                     new_pack.d_z[k] = d.z;
+                    new_pack.time[k] = generate_rand_sample();
                 }
                 //if there is no dof
                 else{
@@ -51,6 +52,7 @@ inline void jitter_sample(int n_sqrt,std::vector<RP8>& sample_packs,const RP8& r
                 new_pack.d_x[k] = reference_ray_pack.d_x[k] + random_displacement.x;
                 new_pack.d_y[k] = reference_ray_pack.d_y[k] + random_displacement.y;
                 new_pack.d_z[k] = reference_ray_pack.d_z[k] + random_displacement.z;
+                new_pack.time[k] = generate_rand_sample();
                 }
                  
             }

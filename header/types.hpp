@@ -99,13 +99,14 @@ struct SoARayQueue{
     std::vector<fl> area_light_v;
     std::vector<int> depth;
     std::vector<int> pixel_index; // Index to track which pixel (0-7) this ray belongs to
-
-    void push(fl ox, fl oy, fl oz, fl dx, fl dy, fl dz, fl tr, fl tg, fl tb, int d, int idx) {
+    std::vector<fl> time;
+    
+    void push(fl ox, fl oy, fl oz, fl dx, fl dy, fl dz, fl tr, fl tg, fl tb, int d, int idx,fl t) {
         o_x.push_back(ox); o_y.push_back(oy); o_z.push_back(oz);
         d_x.push_back(dx); d_y.push_back(dy); d_z.push_back(dz);
         tp_r.push_back(tr); tp_g.push_back(tg); tp_b.push_back(tb);
         depth.push_back(d);
-        pixel_index.push_back(idx);
+        pixel_index.push_back(idx);time.push_back(t);
     }
 
     bool pop(fl& ox, fl& oy, fl& oz, fl& dx, fl& dy, fl& dz, fl& tr, fl& tg, fl& tb, int& d, int& idx) {
@@ -172,7 +173,7 @@ struct alignas(32) RP8{
     int mat_id[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
     int depth[8] = {0, 0, 0, 0, 0, 0, 0, 0};  // Bounce depth for each ray
     int pixel_index[8] = {0, 1, 2, 3, 4, 5, 6, 7}; // Pixel index for each ray (0-7)
-
+    fl time[8] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
 };
 
 struct HitRecord{
@@ -288,7 +289,7 @@ struct MeshInfo{
     Mat4f transformation_matrix;
     
     Mat4f inverse_transformation_matrix;
-  
+    Vec3f mb_vector = {0.f,0.f,0.f};
     
     int id;
     int base_mesh_id;
@@ -298,6 +299,7 @@ struct MeshInfo{
     //will be transcended by the first mesh
     int bvh_index=-1;
     bool reset_transform=false;
+    bool motion_blur = false;
 };
 
 struct PrimitiveData{
@@ -351,9 +353,11 @@ struct BLAS{
     AABB bbox;
     Mat4f inv_transform;
     Mat4f transformation_matrix;
+    Vec3f mb_vector;
     int material_id;
     //this also can denote the sphere index as we have a single blas struct for both mesh instance and the spheres
     int bvh_index;
+    bool motion_blur = false;
 };
 
 struct TLASNode{

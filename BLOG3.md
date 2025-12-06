@@ -1,4 +1,4 @@
-<img width="800" height="800" alt="spheres_dof" src="https://github.com/user-attachments/assets/0fbddf18-a462-4b3d-b6a5-e006acb42bf5" /># Ray_tracer::devlog_3
+# Ray_tracer::devlog_3
 ## Part 1: Compulsory Migration
 <img width="1356" height="306" alt="image" src="https://github.com/user-attachments/assets/69808650-1d73-4973-ac0f-60b1dc71cd33" />
 As blog.metu.edu.tr servers are down I have decided to move the blogposts to Github from now on.   
@@ -45,7 +45,39 @@ In order to cast soft shadows point lights are not sufficient as they are singul
 
 Sampling a random position on the area light for 8 rays in a ray pack.
 
-<img width="847" height="244" alt="image" src="https://github.com/user-attachments/assets/4ef6b457-9bfe-41c4-938e-a34911a04d86" />
+<img width="847" height="240" alt="image" src="https://github.com/user-attachments/assets/b9c0ed80-5260-486e-805a-0f77d9503f5a" />
 
+Calculating intensity for the area light which will unify the shading pipeline afterwards, meaning after this point we have a ray for which we know the intensity and hence we can make our calculations just as before we did for the point lights. 
+
+<img width="800" height="800" alt="cornellbox_area" src="https://github.com/user-attachments/assets/49690c1c-f228-482b-8002-83107266f133" />
+
+<img width="800" height="800" alt="chessboard_arealight" src="https://github.com/user-attachments/assets/55e5903e-4473-4314-91d6-67ab083b04bc" />
+
+## Part 6: Time Sampling and Motion Blur
+
+This part was the most difficult one for me to understand completely. At first I have completely ignored the transformations for the motion blur enabled objects, then I have sampled the time and then applied the same transform to both the object and the ray at the same time which resulted in no motion blur at all. At last I have forgotten to set the time variable for the shadow rays which are initialized at t=0, resulting in misfitting shadows. In addition to these I have forgotten to update the ray_tracer internal loop that kept track of refracted rays to have time which had no effect on the scenes rendered but I have fixed it nevertheless. You can see the result of the motion blur below.
+
+
+
+<img width="750" height="600" alt="cornellbox_boxes_dynamic" src="https://github.com/user-attachments/assets/f1f92219-6077-4f4a-8a95-4865a48870c7" />
+
+<img width="800" height="480" alt="dragon_dynamic" src="https://github.com/user-attachments/assets/afcb22c8-9324-4e95-a182-696e19e77f13" />
+
+Dragon also features the non-vacuum medium attenuation effect.
+
+## Part 7: Roughness and Glossy Reflections
+
+This part was the easiest and most straightforward of all. For the mirror, conductor and dielectric materials, in order to create a brushed/patina look on the surface, we perturb the normals with help of 2 random samples, Orthonormal base of which the samples are taken and roughness parameter which scales the effect.   
+
+<img width="643" height="166" alt="image" src="https://github.com/user-attachments/assets/61284828-967b-46f3-835a-a29acfb9644f" />
+
+<img width="828" height="950" alt="Screenshot from 2025-12-06 17-12-52" src="https://github.com/user-attachments/assets/b9c9dd1f-0913-4f0d-880b-702d547b1803" />
+
+<img width="800" height="800" alt="metal_glass_plates" src="https://github.com/user-attachments/assets/ba14ae25-6df9-4949-8be7-d063530b8ca9" />
+
+<img width="800" height="800" alt="cornellbox_brushed_metal" src="https://github.com/user-attachments/assets/405cf152-4d2b-43a5-8a51-c6a88b3ce736" />
+
+
+## Part 8: Performance Measurements and Conclusion
 
 

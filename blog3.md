@@ -10,7 +10,9 @@ From the previous assignments I had 2 unsolved issues. One was that with Chinese
 
 Green glass is missing in the above dragon. Which was a result of backface culling as the refracted rays inside the objects, when intersected while leaving the object fails at the front face test and hence the intersection was not accepted as a result the rays were never accepted as exiting so the attenuation was never applied. I have managed to escape this by culling on the condition that the currently intersected material was not a dielectric.
 
+<img width="400" height="400" alt="dragon_dynamic" src="https://github.com/user-attachments/assets/32fb532f-224c-489d-a473-ddfa47207d18" />
 <img width="408" height="308" alt="image" src="https://github.com/user-attachments/assets/13c76f65-ef83-40f5-9b07-176fb1556a9c" />
+
 
 For the precision issues I have discussed with my friends regarding to their solutions. Some of them included using doubles and lower default epsilons, while the others suggested scaling the scene altogether then dividing the t value by the scale factor. Both of which are valid solutions. I haven't implemented them in my raytracer as I believe it is more appropriate to fix the scene then to implement scaling for only one scene that requests it. I will be uploading a more forgiving and visually equivalent version of it to this repository for the following attendees of this course. 
 
@@ -79,10 +81,15 @@ This part was the easiest and most straightforward of all. For the mirror, condu
 
 
 ## Part 8: Performance Measurements and Conclusion
+Below are the performance measurements for this assignment. All the measurements are conducted on AMD Ryzen 5600h 6 core processor.
+
 https://github.com/user-attachments/assets/6caa2412-1ad2-480a-b62b-953e5ecd4297
+
 | Scene Preview | Scene Name | Preprocessing Time | Render Time |
 | :---: | :---: | :---: | :---: |
-| <img width="400" height="400" alt="chessboard_arealight_dof_glass_queen" src="https://github.com/user-attachments/assets/d7931b4c-80b7-4985-92e4-fed668e8b5ef" /> | `chessboard_arealight_dof_glass_queen` | 87 ms | 7.74 s |
-| <img width="400" height="400" alt="dragon_dynamic" src="https://github.com/user-attachments/assets/32fb532f-224c-489d-a473-ddfa47207d18" /> | `dragon_dynamic` | 3.9 s | 60.8 s |
-| <img width="400" height="400" alt="tap_0121" src="https://github.com/user-attachments/assets/0c5c977a-0664-4eae-90c2-4ea88492ad3c" /> | `tap_0121` | 57 ms | 3.1 s |
-| <img width="400" height="400" alt="wine_glass" src="https://github.com/user-attachments/assets/a2739043-8c2f-46f2-9bb1-cba6fb70e671" /> | `wine_glass` | 7 ms | 97.9 s |
+| <img width="600" height="600" alt="chessboard_arealight_dof_glass_queen" src="https://github.com/user-attachments/assets/d7931b4c-80b7-4985-92e4-fed668e8b5ef" /> | `chessboard_arealight_dof_glass_queen` | 87 ms | 7.74 s |
+| <img width="600" height="600" alt="dragon_dynamic" src="https://github.com/user-attachments/assets/32fb532f-224c-489d-a473-ddfa47207d18" /> | `dragon_dynamic` | 3.9 s | 60.8 s |
+| <img width="600" height="600" alt="tap_0121" src="https://github.com/user-attachments/assets/0c5c977a-0664-4eae-90c2-4ea88492ad3c" /> | `tap_0121` | 57 ms | 3.1 s |
+| <img width="600" height="600" alt="wine_glass" src="https://github.com/user-attachments/assets/a2739043-8c2f-46f2-9bb1-cba6fb70e671" /> | `wine_glass` | 7 ms | 97.9 s |
+| <img width="600" height="600" alt="cornellbox_area" src="https://github.com/user-attachments/assets/42bf34ef-6017-4d19-84fa-645a6b97c442" /> | `cornellbox_area` | 0 ms | 2.3 s |
+| <img width="600" height="600" alt="metal_glass_plates" src="https://github.com/user-attachments/assets/e3633736-3082-4f2d-9498-47e1398ff07a"  /> | `metal_glass_plates` | 0 ms | 3.4 s |

@@ -80,4 +80,7 @@ This part was the easiest and most straightforward of all. For the mirror, condu
 
 ## Part 8: Performance Measurements and Conclusion
 
-
+| Scene Preview | Preprocessing Time | Render Time |
+| :---: | :---: | :---: |
+| <img src="LINK_TO_DRAGON_IMAGE" width="250" alt="Chinese Dragon"> | 124 ms | 14.5 s |
+| <img src="LINK_TO_GLASS_IMAGE" width="250" alt="Green Glass"> | 45 ms | 8.2 s |

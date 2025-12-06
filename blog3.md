@@ -79,8 +79,10 @@ This part was the easiest and most straightforward of all. For the mirror, condu
 
 
 ## Part 8: Performance Measurements and Conclusion
-
-| Scene Preview | Preprocessing Time | Render Time |
-| :---: | :---: | :---: |
-| <img src="LINK_TO_DRAGON_IMAGE" width="250" alt="Chinese Dragon"> | 124 ms | 14.5 s |
-| <img src="LINK_TO_GLASS_IMAGE" width="250" alt="Green Glass"> | 45 ms | 8.2 s |
+https://github.com/user-attachments/assets/6caa2412-1ad2-480a-b62b-953e5ecd4297
+| Scene Preview | Scene Name | Preprocessing Time | Render Time |
+| :---: | :---: | :---: | :---: |
+| <img width="400" height="400" alt="chessboard_arealight_dof_glass_queen" src="https://github.com/user-attachments/assets/d7931b4c-80b7-4985-92e4-fed668e8b5ef" /> | `chessboard_arealight_dof_glass_queen` | 87 ms | 7.74 s |
+| <img width="400" height="400" alt="dragon_dynamic" src="https://github.com/user-attachments/assets/32fb532f-224c-489d-a473-ddfa47207d18" /> | `dragon_dynamic` | 3.9 s | 60.8 s |
+| <img width="400" height="400" alt="tap_0121" src="https://github.com/user-attachments/assets/0c5c977a-0664-4eae-90c2-4ea88492ad3c" /> | `tap_0121` | 57 ms | 3.1 s |
+| <img width="400" height="400" alt="wine_glass" src="https://github.com/user-attachments/assets/a2739043-8c2f-46f2-9bb1-cba6fb70e671" /> | `wine_glass` | 7 ms | 97.9 s |

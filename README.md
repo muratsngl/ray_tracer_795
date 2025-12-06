@@ -1,4 +1,4 @@
-# Ray_tracer::devlog_3
+<img width="800" height="800" alt="spheres_dof" src="https://github.com/user-attachments/assets/0fbddf18-a462-4b3d-b6a5-e006acb42bf5" /># Ray_tracer::devlog_3
 ## Part 1: Compulsory Migration
 <img width="1356" height="306" alt="image" src="https://github.com/user-attachments/assets/69808650-1d73-4973-ac0f-60b1dc71cd33" />
 As blog.metu.edu.tr servers are down I have decided to move the blogposts to Github from now on.   
@@ -33,4 +33,19 @@ The effect is really beautiful and adds a lot of character to the rendered image
 
 
 <img width="800" height="800" alt="spheres_dof" src="https://github.com/user-attachments/assets/cfd0f5ca-327d-4767-a469-671ce8960a00" />
+
+<img width="1920" height="1080" alt="focusing_dragons" src="https://github.com/user-attachments/assets/3ce7ec86-6fcd-40fd-93c4-ea5747ec6c00" />
+
+
+## Part 5: Area Lights and Soft Shadows
+
+In order to cast soft shadows point lights are not sufficient as they are singular light points and their shadows are in a sense binary. Area lights are different in that sense, with the power of random sampling they can provide soft shadows and thus improve realism. The mechanism it achieves this can be summarized as follows. We first sample a random point on the area light by constructing a orthonormal base on the area light plane using the normal and the position of the area light. Later on we calculate the distance and the cosine of the angle between the light-object ray and the area light plane normal to calculate the recieved irradiance at the sample position. Below you can find the code that implements the above functionality.
+
+<img width="629" height="298" alt="image" src="https://github.com/user-attachments/assets/8a2a7cce-bf98-427d-bb94-ee341c3f6562" />
+
+Sampling a random position on the area light for 8 rays in a ray pack.
+
+<img width="847" height="244" alt="image" src="https://github.com/user-attachments/assets/4ef6b457-9bfe-41c4-938e-a34911a04d86" />
+
+
 

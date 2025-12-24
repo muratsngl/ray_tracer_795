@@ -55,7 +55,7 @@ For the perling noise calculations I have used the original ken perlin implement
 
 ## Part 6: Results
 Below are the performance measurements for this assignment. All the measurements are conducted on AMD Ryzen 5600h 6 core processor.
-https://github.com/user-attachments/assets/b87d809f-d637-4c83-a3fd-55fee0d36187
+<video src="https://github.com/user-attachments/assets/b87d809f-d637-4c83-a3fd-55fee0d36187" autoplay muted loop playsinline width="100%"></video>
 
 | Scene Preview | Scene Name | Preprocessing Time | Render Time |
 | :---: | :---: | :---: | :---: |

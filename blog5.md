@@ -1,4 +1,4 @@
-name=blog5.md url=https://github.com/muratsngl/ray_tracer_795/blob/63550de24adacaa8a93847571239b773e98f1981/blog5.md
+
 # ray_tracer::devlog_5
 ## Part 1: Breaking Free from 8-bit Hell
 

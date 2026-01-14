@@ -376,19 +376,19 @@ if (! scene.env_light_data__.el_image_id.empty()) {
                     xs::load_aligned(env_contrib_b));
 }
 
-## Part 6: Results
-
-
-## Part 8: Performance Measurements and Conclusion
+## Part 6: Performance Measurements and Conclusion
 Below are the performance measurements for this assignment. All the measurements are conducted on AMD Ryzen 5600h 6 core processor.
-
-https://github.com/user-attachments/assets/6caa2412-1ad2-480a-b62b-953e5ecd4297
 
 | Scene Preview | Scene Name | Preprocessing Time | Render Time |
 | :---: | :---: | :---: | :---: |
-| <img width="600" height="600" alt="chessboard_arealight_dof_glass_queen" src="https://github.com/user-attachments/assets/d7931b4c-80b7-4985-92e4-fed668e8b5ef" /> | `chessboard_arealight_dof_glass_queen` | 87 ms | 7.74 s |
-| <img width="600" height="600" alt="dragon_dynamic" src="https://github.com/user-attachments/assets/32fb532f-224c-489d-a473-ddfa47207d18" /> | `dragon_dynamic` | 3.9 s | 60.8 s |
-| <img width="600" height="600" alt="tap_0121" src="https://github.com/user-attachments/assets/0c5c977a-0664-4eae-90c2-4ea88492ad3c" /> | `tap_0121` | 57 ms | 3.1 s |
-| <img width="600" height="600" alt="wine_glass" src="https://github.com/user-attachments/assets/a2739043-8c2f-46f2-9bb1-cba6fb70e671" /> | `wine_glass` | 7 ms | 97.9 s |
-| <img width="600" height="600" alt="cornellbox_area" src="https://github.com/user-attachments/assets/42bf34ef-6017-4d19-84fa-645a6b97c442" /> | `cornellbox_area` | 0 ms | 2.3 s |
-| <img width="600" height="600" alt="metal_glass_plates" src="https://github.com/user-attachments/assets/e3633736-3082-4f2d-9498-47e1398ff07a"  /> | `metal_glass_plates` | 0 ms | 3.4 s |
+| <img width="600" height="600" alt="cube_directional" src="https://github.com/user-attachments/assets/293dbe86-a8c1-4c76-ac00-5a6efc8282da" /> | `cube_directional` | 87 ms | 7.74 s |
+| <img width="600" height="600" alt="glass_sphere_env" src="https://github.com/user-attachments/assets/739f166f-18d3-4e00-be1a-704b5c796661" /> | `glass_sphere_env` | 0 ms | 142 ms |
+| <img width="600" height="600" alt="head_env_light" src="https://github.com/user-attachments/assets/f1579754-9082-4ab0-9ed9-98aa1a5f1c35" /> | `head_env_light` | 193 ms | 352 ms |
+| <img width="600" height="600" alt="sphere_env_light" src="https://github.com/user-attachments/assets/fea7e751-95ef-4c2b-b993-bd338b847642" /> | `sphere_env_light` | 34 ms | 32.97 s |
+| <img width="600" height="600" alt="audi-tt-glacier" src="https://github.com/user-attachments/assets/b4bcab69-a23b-410f-930b-a4acbc98b092" /> | `audi-tt-glacier` | 774 ms | 110.4 s |
+| <img width="600" height="600" alt="audi-tt-pisa" src="https://github.com/user-attachments/assets/3366ce30-e9d6-4088-83d5-769169b18451"  /> | `audi-tt-pisa` | 1089 ms | 110.86 s |
+
+
+
+
+

@@ -4,7 +4,7 @@
 
 The Dual-Buffer Architecture
 
-My first challenge was moving away from the limited [0, 255] range. I needed to store floating-point radiance values throughout the rendering pipeline without clipping or quantization. Here's the imag[...]
+My first challenge was moving away from the limited [0, 255] range. I needed to store floating-point radiance values throughout the rendering pipeline without clipping or quantization. Here's the image structure I designed:
 
 ```cpp
 struct Image {
@@ -17,11 +17,11 @@ struct Image {
 };
 ```
 
-Why dual storage? I wanted to maintain backward compatibility with my existing LDR textures while supporting HDR environment maps. The is_hdr flag lets me dispatch to the correct buffer during texture[...]
+Why dual storage? I wanted to maintain backward compatibility with my existing LDR textures while supporting HDR environment maps. The is_hdr flag lets me dispatch to the correct buffer during texture sampling—no code duplication needed.
 
 Tone Mapping Infrastructure
 
-I extended my Camera structure to support multiple tone mapping operators per render. This was crucial because I wanted to generate multiple output images (different exposures, gamma values) from a si[...]
+I extended my Camera structure to support multiple tone mapping operators per render. This was crucial because I wanted to generate multiple output images (different exposures, gamma values) from a single expensive HDR render:
 
 ```cpp
 struct Camera {
@@ -44,17 +44,16 @@ The tonemaps vector allows me to process one HDR framebuffer multiple times with
 
 ## Part 2: Photographic Tone Mapping—Getting the Math Right
 
-Implementing Reinhard's photographic operator was trickier than I expected. The burn-out feature required careful handling to avoid artifacts.
+Implementing Reinhard's photographic operator was trickier than I expected. 
 
 Luminance Conversion
 
-I used the standard Rec. 709 coefficients for RGB-to-luminance conversion:
+I used the standard coefficients for RGB-to-luminance conversion:
 
 ```text
 Y = 0.2126·R + 0.7152·G + 0.0722·B
 ```
 
-These coefficients account for human photopic vision—we're most sensitive to green, least to blue.
 
 The Burn-Out Logic
 
@@ -160,7 +159,7 @@ void inline directional_masked(const RP8& ray_pack, const Scene& scene,
 }
 ```
 
-Key Design Decision: I trace shadow rays to infinity (t_max = inf) because directional lights have no position—only direction. This simplified the occlusion test significantly.
+I trace shadow rays to infinity (t_max = inf) because directional lights have no position—only direction. This simplified the occlusion test significantly.
 
 Spot Lights: Three-Zone Falloff
 
@@ -185,13 +184,11 @@ f_batch s_falloff = xs::pow(xs::max(f_batch(0.0f), xs::min(s_ratio, f_batch(1.0f
 f_batch s = xs::select(in_no_falloff, xs::broadcast(1.0f), s_falloff);
 ```
 
-Why quartic (exponent = 4)? I tested various exponents—linear (exponent 1) looked too harsh, quadratic (2) was better, but quartic gave the smoothest visual falloff while maintaining a sharp outer e[...]
 
 ```cpp
 s = pow((cos(alpha) - cos(theta_c/2)) / (cos(theta_f/2) - cos(theta_c/2)), 4);
 ```
 
-operates in inverse cosine space to maintain perceptual uniformity as angles change.
 
 ## Part 4: Environment Lighting—The Real Challenge
 
@@ -234,7 +231,7 @@ inline void sample_cosine_hemisphere(fl xi1, fl xi2, fl& lx, fl& ly, fl& lz) {
 
 PDF: p(ω) = cos(θ)/π
 
-This concentrates samples near the normal direction—perfect for importance sampling Lambertian BRDFs. The trick: cos(θ) = √ξ₂ directly, which I derived by inverting the solid angle CDF weighte[...]
+This concentrates samples near the normal direction—perfect for importance sampling Lambertian BRDFs.
 
 Building an Orthonormal Basis
 
@@ -266,7 +263,7 @@ inline void build_onb(fl nx, fl ny, fl nz,
 }
 ```
 
-Critical Detail: The auxiliary vector selection (X or Y axis) prevents numerical instability when the normal is nearly parallel to one axis. I check if |nx| > 0.9 to decide which axis to use.
+The auxiliary vector selection (X or Y axis) prevents numerical instability when the normal is nearly parallel to one axis. I check if |nx| > 0.9 to decide which axis to use.
 
 UV Mapping: Two Projections
 
@@ -355,7 +352,7 @@ if (sampler_type == "cosine") {
 }
 ```
 
-Key Insight: With cosine-weighted sampling, the PDF exactly matches the cos(θ) term in the integrand, causing perfect cancellation. This is why importance sampling is so powerful—it reduces varianc[...]
+With cosine-weighted sampling, the PDF exactly matches the cos(θ) term in the integrand, causing perfect cancellation. This is why importance sampling is so powerful—it reduces varianc[...]
 
 ## Part 5: Putting It All Together
 

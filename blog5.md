@@ -419,9 +419,9 @@ Below are the performance measurements for this assignment. All the measurements
 
 | Scene Preview | Scene Name | Preprocessing Time | Render Time |
 | :---: | :---: | :---: | :---: |
-| <img width="600" height="600" alt="cube_directional" src="https://github.com/user-attachments/assets/293dbe86-a8c1-4c76-ac00-5a6efc8282da" /> | `cube_directional` | 87 ms | 7.74 s |
-| <img width="600" height="600" alt="glass_sphere_env" src="https://github.com/user-attachments/assets/739f166f-18d3-4e00-be1a-704b5c796661" /> | `glass_sphere_env` | 0 ms | 142 ms |
-| <img width="600" height="600" alt="head_env_light" src="https://github.com/user-attachments/assets/f1579754-9082-4ab0-9ed9-98aa1a5f1c35" /> | `head_env_light` | 193 ms | 352 ms |
+| <img width="600" height="600" alt="cube_directional" src="https://github.com/user-attachments/assets/293dbe86-a8c1-4c76-ac00-5a6efc8282da" /> | `cube_directional` | 0 ms | 142 ms |
+| <img width="600" height="600" alt="glass_sphere_env" src="https://github.com/user-attachments/assets/739f166f-18d3-4e00-be1a-704b5c796661" /> | `glass_sphere_env` | 193 ms | 352 ms|
+| <img width="600" height="600" alt="head_env_light" src="https://github.com/user-attachments/assets/f1579754-9082-4ab0-9ed9-98aa1a5f1c35" /> | `head_env_light` | 466 ms | 3.99 ms |
 | <img width="600" height="600" alt="sphere_env_light" src="https://github.com/user-attachments/assets/fea7e751-95ef-4c2b-b993-bd338b847642" /> | `sphere_env_light` | 34 ms | 32.97 s |
 | <img width="600" height="600" alt="audi-tt-glacier" src="https://github.com/user-attachments/assets/b4bcab69-a23b-410f-930b-a4acbc98b092" /> | `audi-tt-glacier` | 774 ms | 110.4 s |
 | <img width="600" height="600" alt="audi-tt-pisa" src="https://github.com/user-attachments/assets/3366ce30-e9d6-4088-83d5-769169b18451"  /> | `audi-tt-pisa` | 1089 ms | 110.86 s |

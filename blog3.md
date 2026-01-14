@@ -87,9 +87,9 @@ https://github.com/user-attachments/assets/6caa2412-1ad2-480a-b62b-953e5ecd4297
 
 | Scene Preview | Scene Name | Preprocessing Time | Render Time |
 | :---: | :---: | :---: | :---: |
-| <img width="600" height="600" alt="chessboard_arealight_dof_glass_queen" src="https://github.com/user-attachments/assets/d7931b4c-80b7-4985-92e4-fed668e8b5ef" /> | `chessboard_arealight_dof_glass_queen` | 87 ms | 7.74 s |
-| <img width="600" height="600" alt="dragon_dynamic" src="https://github.com/user-attachments/assets/32fb532f-224c-489d-a473-ddfa47207d18" /> | `dragon_dynamic` | 3.9 s | 60.8 s |
-| <img width="600" height="600" alt="tap_0121" src="https://github.com/user-attachments/assets/0c5c977a-0664-4eae-90c2-4ea88492ad3c" /> | `tap_0121` | 57 ms | 3.1 s |
-| <img width="600" height="600" alt="wine_glass" src="https://github.com/user-attachments/assets/a2739043-8c2f-46f2-9bb1-cba6fb70e671" /> | `wine_glass` | 7 ms | 97.9 s |
-| <img width="600" height="600" alt="cornellbox_area" src="https://github.com/user-attachments/assets/42bf34ef-6017-4d19-84fa-645a6b97c442" /> | `cornellbox_area` | 0 ms | 2.3 s |
-| <img width="600" height="600" alt="metal_glass_plates" src="https://github.com/user-attachments/assets/e3633736-3082-4f2d-9498-47e1398ff07a"  /> | `metal_glass_plates` | 0 ms | 3.4 s |
+| <img width="600" height="600" alt="chessboard_arealight_dof_glass_queen" src="https://github.com/user-attachments/assets/d7931b4c-80b7-4985-92e4-fed668e8b5ef" /> | `cube directional` | 0 ms | 142 ms |
+| <img width="600" height="600" alt="dragon_dynamic" src="https://github.com/user-attachments/assets/32fb532f-224c-489d-a473-ddfa47207d18" /> | `dragon_dynamic` | 193 ms | 352 ms |
+| <img width="600" height="600" alt="tap_0121" src="https://github.com/user-attachments/assets/0c5c977a-0664-4eae-90c2-4ea88492ad3c" /> | `tap_0121` | 466 ms | 3.99 s |
+| <img width="600" height="600" alt="wine_glass" src="https://github.com/user-attachments/assets/a2739043-8c2f-46f2-9bb1-cba6fb70e671" /> | `wine_glass` | 34 ms | 32.97 s |
+| <img width="600" height="600" alt="cornellbox_area" src="https://github.com/user-attachments/assets/42bf34ef-6017-4d19-84fa-645a6b97c442" /> | `cornellbox_area` | 774 ms | 110.04 s |
+| <img width="600" height="600" alt="metal_glass_plates" src="https://github.com/user-attachments/assets/e3633736-3082-4f2d-9498-47e1398ff07a"  /> | `metal_glass_plates` | 1.09ms | 110.86 s |

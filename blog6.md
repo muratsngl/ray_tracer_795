@@ -453,6 +453,8 @@ Cornellbox_Glass_mirror was:427745ms
 ## Part 5: Missing Features & Scenes 
 <img width="512" height="512" alt="cornellbox_prism_light_phot_weird_graze" src="https://github.com/user-attachments/assets/b04c1e08-61c2-4f2d-a297-ae488e56758a" />
 <img width="512" height="512" alt="cornellbox_sphere_light_phot_weird_graze" src="https://github.com/user-attachments/assets/e27cb291-72b6-47de-8e4b-f2f0f1834a49" />
+
+
 #### Inaccurate Shadows
 
 Solved by changing the shadow ray offsetting from ray direction*epsilon to surface_normal * epsilon. FIXED
@@ -463,4 +465,6 @@ Solved by changing the shadow ray offsetting from ray direction*epsilon to surfa
 
 There was a source of correlation which I could not find even though I have attempted numerous times. As you can see the image has a tiled appereance. Those tiles are the ray packets I use for path tracing. NOT FIXED
 
+#### Missing Renders
 
+I did not render any of the scenes except for the ones above. 

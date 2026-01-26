@@ -1,422 +1,552 @@
-# ray_tracer::devlog_7 - Volumetric Rendering: Clouds, Smoke, and the Physics of Light in Participating Media
+# ray_tracer::devlog_volume - Volumetric Rendering with NanoVDB
 
-This devlog covers Fatih & Murat's journey from integrating NanoVDB for efficient volume data access to implementing physically-based scattering with the Henyey-Greenstein phase function.
+After implementing path tracing, NEE, and MIS, we (Murat and Fatih) tackled one of the most visually striking features in rendering: **volumetric effects**. This meant rendering participating media—smoke, fog, clouds—using real-world volumetric data stored in OpenVDB format. We integrated **NanoVDB** for efficient CPU-based volume data access and implemented full physically-based volume rendering with scattering, absorption, and shadowing.
 
+---
 
-## Part 1: NanoVDB Integration - CPU-Based Volume Data Access
+## Part 1: Data & Parsing - Integrating NanoVDB
 
-### The Volume Struct: First-Class Scene Objects
+### The Volume Struct: Treating VDB Grids as First-Class Scene Objects
 
-We wanted volumes to be treated as primitives, just like spheres and meshes. Our first step was adding a Volume struct to the scene definition:
+We started by defining a `Volume` struct that would sit alongside meshes, spheres, and other primitives in our scene. The key challenge was integrating NanoVDB's data structures into our existing architecture.
+
+Here's the Volume struct we defined in `parser.h`:
 
 ```cpp
-struct Volume {
-    int id;
-    std::string vdb_path;           // Path to .nvdb file
-    nanovdb::GridHandle<> handle;   // NanoVDB grid handle
-    nanovdb::FloatGrid* grid;       // Pointer to the grid
-    Vec3f absorption;               // σ_a: absorption coefficient
-    Vec3f scattering;               // σ_s: scattering coefficient  
-    fl density_multiplier;          // Global density scale
-    fl phase_g;                     // Henyey-Greenstein anisotropy [-1, 1]
-    Mat4x4 transform;               // World-to-volume transform
-    Mat4x4 inv_transform;           // Volume-to-world transform
-    BoundingBox aabb;               // Axis-aligned bounding box in world space
+struct Volume
+{
+    // NanoVDB components
+    // Handle owns the memory buffer
+    nanovdb::GridHandle<nanovdb::HostBuffer> handle;
+   
+    const nanovdb::FloatGrid* grid;
+    
+    nanovdb::ReadAccessor<float> accessor;
+
+    // Spatial bounds
+    // Used for BVH construction and ray intersection
+    AABB bbox; 
+
+    // Rendering parameters
+    float density_scale; // Multiplier to control how "thick" the smoke is
+    float step_size;     // Ray marching step size (lower = higher quality, slower)
+
+    // Transformations
+    // VDBs have an internal index->world transform. 
+    // This matrix is for EXTRA scene placement (e.g. moving the VDB in the scene).
+    Mat4f transformation;     
+    Mat4f invTransformation;
+
+    // Default constructor
+    Volume() : 
+        material_id(-1), 
+        grid(nullptr), 
+        accessor(nanovdb::ReadAccessor<float>(nullptr)), 
+        density_scale(1.0f), 
+        step_size(0.1f) 
+    {
+        transformation = Mat4f::identity();
+        invTransformation = Mat4f::identity();
+    }
 };
 ```
-Storing both `absorption` and `scattering` separately lets us balance Beer's Law attenuation (absorption) against in-scattering contribution (scattering) independently—critical for getting diverse lighting outputs.
 
-### JSON Parsing: Handling OpenVDB Paths
+**Key Design Decisions:**
 
-We extended our JSON parser to recognize a new `"Volumes"` array:
+1. **`GridHandle<nanovdb::HostBuffer> handle`**: This owns the memory buffer. NanoVDB requires the handle to stay alive for the grid pointer to remain valid.
+
+2. **`const nanovdb::FloatGrid* grid`**: A pointer to the actual grid data. We use `FloatGrid` because our densities are stored as floating-point values.
+
+3. **`ReadAccessor<float> accessor`**: NanoVDB's optimized data access structure. Though we ended up using `grid->getAccessor()` directly in our sampling code.
+
+4. **`AABB bbox`**: We store world-space bounds for ray intersection testing. Without this, we'd have to march through empty space.
+
+5. **Physical Parameters**: The struct also includes `sigma_a` (absorption), `sigma_s` (scattering), `g` (phase function asymmetry), and `scale` (density multiplier), though these weren't visible in the header snippet we examined—they're parsed from JSON.
+
+### Adding Volumes to the Scene
+
+We extended the `Scene` struct to hold a vector of volumes:
 
 ```cpp
-if (doc.HasMember("Volumes") && doc["Volumes"].IsArray()) {
-    for (auto& vol_obj : doc["Volumes"].GetArray()) {
+struct Scene
+{
+    // ... existing fields ...
+    vector<Volume> volumes;  // Added for volumetric rendering
+};
+```
+
+### Robust JSON Parsing: Handling OpenVDB Paths and Nested Volume Definitions
+
+The parsing logic in `parser.cpp` (lines 535-604) needed to handle various JSON structures and robustly load NanoVDB files:
+
+```cpp
+if (s.contains("Volumes")) {
+    json volNode = s["Volumes"];
+
+    // FIX: Handle the nested structure "Volumes": { "Volume": { ... } }
+    // If "Volumes" is an object containing a key "Volume", drill down into it.
+    if (volNode.is_object() && volNode.contains("Volume")) {
+        volNode = volNode["Volume"];
+    }
+
+    // Reserve space if it's an array
+    int volCount = volNode.is_array() ? volNode.size() : 1;
+    scene.volumes.reserve(volCount);
+
+    auto parseOneVolume = [&](const json& vj) {
         Volume vol;
-        vol.id = vol_obj["Id"].GetInt();
-        vol.vdb_path = vol_obj["VdbPath"].GetString();
+
+        // 1. Load parameters (Physics)
+        vol.sigma_a = parser::parseVec3f(vj.value("Absorption", "0.0 0.0 0.0"));
+        vol.sigma_s = parser::parseVec3f(vj.value("Scattering", "1.0 1.0 1.0"));
+        vol.g       = parser::parseFloat(vj.value("Asymmetry", "0.0"));
+        vol.scale   = parser::parseFloat(vj.value("Scale", "2.0"));
+
+        // 2. Load NanoVDB Grid Path
+        // Robust check for different key names (path, Path, file, File)
+        string nvdb_rel;
+        if (vj.contains("path")) nvdb_rel = vj["path"];
+        else if (vj.contains("Path")) nvdb_rel = vj["Path"];
+        else if (vj.contains("File")) nvdb_rel = vj["File"];
+        else if (vj.contains("file")) nvdb_rel = vj["file"];
+        else {
+            std::cerr << "Error: Volume definition missing 'path' or 'File' key." << std::endl;
+            return;
+        }
+
+        string nvdb_path =  nvdb_rel;
         
-        // Parse extinction coefficients
-        const auto& abs = vol_obj["Absorption"].GetArray();
-        vol.absorption = {abs[0].GetFloat(), abs[1].GetFloat(), abs[2].GetFloat()};
-        
-        const auto& scat = vol_obj["Scattering"].GetArray();
-        vol.scattering = {scat[0].GetFloat(), scat[1].GetFloat(), scat[2].GetFloat()};
-        
-        vol.density_multiplier = vol_obj["DensityMultiplier"].GetFloat();
-        vol.phase_g = vol_obj["PhaseG"].GetFloat();
-        
-        // Parse transformation matrix (4x4)
-        const auto& transf = vol_obj["Transformation"].GetArray();
-        parse_mat4x4(transf, vol.transform);
-        vol.inv_transform = inverse(vol.transform);
-        
-        scene.volumes.push_back(vol);
+        try {
+            // Read the first grid from the file
+            auto handle = nanovdb::io::readGrid<nanovdb::HostBuffer>(nvdb_path);
+            vol.handle = std::move(handle);
+            vol.grid = vol.handle.grid<float>();
+
+            if (!vol.grid) {
+                std::cerr << "Error: Loaded VDB is not a FloatGrid: " << nvdb_path << std::endl;
+                return;
+            }
+            
+            // 3. Extract World Space AABB
+            auto bbox = vol.grid->worldBBox();
+            vol.worldBounds.min = Vec3f(bbox.min()[0], bbox.min()[1], bbox.min()[2]);
+            vol.worldBounds.max = Vec3f(bbox.max()[0], bbox.max()[1], bbox.max()[2]);
+
+        } catch (const std::exception& e) {
+            std::cerr << "Failed to load volume: " << nvdb_path << "\nReason: " << e.what() << std::endl;
+            return;
+        }
+
+        scene.volumes.push_back(std::move(vol));
+    };
+
+    // Handle Array vs Single Object
+    if (volNode.is_array()) {
+        for (const auto& vj : volNode) parseOneVolume(vj);
+    } else {
+        parseOneVolume(volNode);
     }
 }
 ```
 
-### On-the-Fly NanoVDB Loading
+**What We Learned:**
 
-During scene preprocessing, we load the `.nvdb` files and extract grid pointers:
+1. **Nested JSON handling**: Scene files might have `"Volumes": { "Volume": {...} }` or `"Volumes": [...]`. We check both cases.
 
-```cpp
-for (Volume& vol : scene.volumes) {
-    vol.handle = nanovdb::io::readGrid(vol.vdb_path);
-    vol.grid = vol.handle.grid<float>();
-    
-    if (!vol.grid) {
-        throw std::runtime_error("Failed to load NanoVDB grid: " + vol.vdb_path);
-    }
-    
-    // Compute world-space AABB from index space bounds
-    auto index_bbox = vol.grid->indexBBox();
-    Vec3f corners[8] = { /* transform all 8 corners */ };
-    vol.aabb = compute_world_aabb(corners);
-}
-```
+2. **Case-insensitive key lookup**: Different tools export VDB paths as "path", "Path", "file", or "File". We check all variants.
 
-Why NanoVDB? It's compact and fast.
+3. **Move semantics**: We use `std::move(handle)` because `GridHandle` is non-copyable. The handle must live in the Volume struct.
+
+4. **Bounds extraction**: `vol.grid->worldBBox()` returns NanoVDB's `BBox` type. We convert it to our `AABB` format.
 
 ---
 
-## Part 2: Ray Marching Implementation - Fixed Step-Size Integration
+## Part 2: Core Ray Tracing - World-to-Index Mapping and AABB Optimization
 
-### The Rendering Equation for Volumes
+### Ray Marching Implementation: Fixed Step-Size Integration
 
-The volume rendering equation describes how light changes as it travels through a participating medium:
-
-```text
-L_o(x, ω) = ∫₀ᵗ T(x, x_t) · [σ_s(x_t) · L_i(x_t, ω) + σ_a(x_t) · 0] dt
-```
-
-where:
-- **T(x, x_t)** is the transmittance (Beer's Law exponential extinction)
-- **σ_s** is the scattering coefficient (how much light scatters *into* the ray)
-- **σ_a** is the absorption coefficient (how much light is absorbed)
-- **L_i** is the incoming radiance at point x_t (from lights or environment)
-
-The total extinction coefficient is **σ_t = σ_a + σ_s**.
-
-### World-to-Index Space Mapping
-
-Before marching, we transform rays from world space to the volume's index space:
+The heart of volumetric rendering is ray marching—stepping along a ray through the volume and accumulating scattering and absorption. Here's our implementation in `raytracer.cpp` (lines 494-548):
 
 ```cpp
-void transform_ray_to_index_space(const Vec3f& world_origin, const Vec3f& world_dir,
-                                  const Volume& vol,
-                                  Vec3f& index_origin, Vec3f& index_dir) {
-    // Apply inverse transformation matrix
-    index_origin = transform_point(world_origin, vol.inv_transform);
-    index_dir = transform_direction(world_dir, vol.inv_transform);
-}
-```
+Vec3f integrate_volume(const Ray& ray, const Scene& scene, float t_entry, float t_exit, const Vec3f& background_color)
+{
+    if (t_entry >= t_exit) return background_color;
 
-This lets us directly query the NanoVDB grid using voxel coordinates.
-
-### AABB Optimization: Clipping Ray Intervals
-
-We only march through the volume's bounding box:
-
-```cpp
-bool intersect_aabb(const Vec3f& ray_o, const Vec3f& ray_d,
-                    const BoundingBox& aabb,
-                    fl& t_near, fl& t_far) {
-    Vec3f inv_d = {1.0f / ray_d.x, 1.0f / ray_d.y, 1.0f / ray_d.z};
+    Vec3f L(0, 0, 0); 
+    Vec3f T(1, 1, 1); 
+    float step_size = 0.3f; 
     
-    fl t1 = (aabb.min.x - ray_o.x) * inv_d.x;
-    fl t2 = (aabb.max.x - ray_o.x) * inv_d.x;
-    fl t3 = (aabb.min.y - ray_o.y) * inv_d.y;
-    fl t4 = (aabb.max.y - ray_o.y) * inv_d.y;
-    fl t5 = (aabb.min.z - ray_o.z) * inv_d.z;
-    fl t6 = (aabb.max.z - ray_o.z) * inv_d.z;
-    
-    t_near = std::max({std::min(t1, t2), std::min(t3, t4), std::min(t5, t6)});
-    t_far = std::min({std::max(t1, t2), std::max(t3, t4), std::max(t5, t6)});
-    
-    return t_far >= t_near && t_far >= 0.0f;
-}
-```
-
-This clips the marching interval [t_near, t_far] to only the volume's extent—no wasted samples outside.
-
-### Fixed Step-Size Integration Loop
-
-Here's our ray marching kernel for a single volume:
-
-```cpp
-Vec3f march_volume(const Vec3f& ray_o, const Vec3f& ray_d,
-                   fl t_near, fl t_far,
-                   const Volume& vol,
-                   const Scene& scene) {
-    const fl step_size = 0.1f;  // Fixed step (tunable)
-    const int max_steps = 512;
-    
-    Vec3f accumulated_light = {0.0f, 0.0f, 0.0f};
-    Vec3f transmittance = {1.0f, 1.0f, 1.0f};  // Start fully transparent
-    
-    fl t = t_near;
-    int steps = 0;
-    
-    while (t < t_far && steps < max_steps) {
-        Vec3f sample_pos_world = ray_o + ray_d * t;
-        Vec3f sample_pos_index = transform_point(sample_pos_world, vol.inv_transform);
+    for (float t = t_entry; t < t_exit; t += step_size) {
         
-        // Sample density from NanoVDB grid
-        fl density = sample_grid(vol.grid, sample_pos_index) * vol.density_multiplier;
-        
-        if (density > 1e-6f) {
-            // Compute extinction
-            Vec3f sigma_t = (vol.absorption + vol.scattering) * density;
-            
-            // Calculate transmittance decrement (Beer's Law)
-            Vec3f tau = sigma_t * step_size;
-            Vec3f step_transmittance = {exp(-tau.x), exp(-tau.y), exp(-tau.z)};
-            
-            // Accumulate in-scattering light
-            Vec3f in_scatter = compute_inscattering(sample_pos_world, ray_d, vol, scene);
-            Vec3f sigma_s_rgb = vol.scattering * density;
-            Vec3f contribution = transmittance * (1.0f - step_transmittance) * sigma_s_rgb * in_scatter;
-            accumulated_light += contribution;
-            
-            // Update transmittance
-            transmittance *= step_transmittance;
-            
-            // Early termination if transmittance too low
-            if (transmittance.x < 0.01f && transmittance.y < 0.01f && transmittance.z < 0.01f) {
-                break;
+        float dt = std::min(step_size, t_exit - t);
+        Vec3f p = ray.origin + ray.direction * (t + 0.5f * dt);
+
+        for (const auto& vol : scene.volumes) {
+            float density = SampleDensity(vol, p);
+
+            if (density > 0.0f) {
+                Vec3f sigma_a = vol.sigma_a * density;
+                Vec3f sigma_s = vol.sigma_s * density;
+                Vec3f sigma_t = sigma_a + sigma_s; 
+
+                // Transmittance over step dt
+                Vec3f step_transmittance;
+                step_transmittance.x = std::exp(-sigma_t.x * dt);
+                step_transmittance.y = std::exp(-sigma_t.y * dt);
+                step_transmittance.z = std::exp(-sigma_t.z * dt);
+
+                // In-Scattering
+                Vec3f in_scattered_light(0, 0, 0);
+
+                for (const auto& light : scene.point_lights) {
+                    Vec3f dir_to_light = light.position - p;
+                    float dist_light = dir_to_light.length();
+                    dir_to_light = dir_to_light.normalize();
+
+                    float phase = phase_function(ray.direction, dir_to_light, vol.g);
+                    
+                    // Light visibility (Shadows + Volume Attenuation)
+                    Vec3f Li = SampleLightRadiance(light, p, scene);
+
+                    // Li is already attenuated by distance and transmittance
+                    in_scattered_light = in_scattered_light + 
+                                         Li.elwiseMult(sigma_s) * phase;
+                }
+
+                L = L + T.elwiseMult(in_scattered_light) * dt;
+                T = T.elwiseMult(step_transmittance);
             }
         }
         
-        t += step_size;
-        steps++;
+        if (T.x < 0.001f && T.y < 0.001f && T.z < 0.001f) break;
     }
-    
-    return accumulated_light;
+
+    return L + T.elwiseMult(background_color);
 }
 ```
 
-**Simplification:** We use a fixed step size instead of adaptive sampling. This trades some accuracy for predictable performance and simpler code.
+**Step-by-Step Breakdown:**
+
+1. **Sample point calculation**: `Vec3f p = ray.origin + ray.direction * (t + 0.5f * dt)` samples at the **midpoint** of each step, reducing discretization artifacts.
+
+2. **Extinction coefficient**: `Vec3f sigma_t = sigma_a + sigma_s` combines absorption and out-scattering. This is the total attenuation.
+
+3. **Beer's Law**: `step_transmittance.x = std::exp(-sigma_t.x * dt)` implements exponential attenuation per channel. We keep transmittance as `Vec3f` to support colored fog.
+
+4. **In-scattering accumulation**: For each light, we compute how much light scatters toward the camera at this point. The phase function weights directional scattering.
+
+5. **Radiance accumulation**: `L = L + T.elwiseMult(in_scattered_light) * dt` adds the in-scattered light, weighted by the current transmittance.
+
+6. **Early termination**: If transmittance drops below 0.001 in all channels, the ray is fully occluded—no need to continue.
+
+### World-to-Index Space: Mapping Ray Coordinates to Voxel Data
+
+NanoVDB stores data in **index space** (integer voxel coordinates), but our rays are in **world space**. The transformation happens in `SampleDensity` (lines 419-434):
+
+```cpp
+float SampleDensity(const Volume& vol, const Vec3f& p)
+{
+    if (!vol.grid) return 0.0f;
+
+    nanovdb::Vec3f objP(p.x, p.y, p.z);
+    nanovdb::Vec3f indexP = vol.grid->worldToIndexF(objP);
+    auto accessor = vol.grid->getAccessor();
+
+    // Use nearest neighbor for simplicity/speed
+    nanovdb::Coord ijk(std::floor(indexP[0] + 0.5f), 
+                       std::floor(indexP[1] + 0.5f), 
+                       std::floor(indexP[2] + 0.5f));
+                       
+    float density = accessor.getValue(ijk);
+    return density * vol.scale;
+}
+```
+
+**Critical Implementation Details:**
+
+1. **`worldToIndexF`**: This is NanoVDB's built-in transformation from world coordinates to continuous index space. It handles the grid's internal transformation matrix.
+
+2. **Nearest-neighbor sampling**: We round to the nearest voxel with `std::floor(indexP[0] + 0.5f)`. Trilinear interpolation would be more accurate but significantly slower.
+
+3. **`accessor.getValue(ijk)`**: NanoVDB's optimized voxel lookup. The accessor maintains a cache of recently accessed tree nodes.
+
+4. **Density scaling**: Multiplying by `vol.scale` lets artists adjust volume "thickness" without re-exporting the VDB file.
+
+### AABB Optimization: Clipping Ray Intervals to Volume Bounds
+
+Without bounding volumes, we'd ray-march through empty space forever. We clip the ray interval to the volume's AABB before integrating (from `ComputeColor`, lines 570-592):
+
+```cpp
+// 2. Volume Integration
+if (!scene.volumes.empty()) {
+    float tVolEnter = FLT_MAX;
+    float tVolExit = -FLT_MAX;
+    bool hitVolume = false;
+
+    for (const auto& vol : scene.volumes) {
+        AABBHit boxHit = IntersectAABB_EnterExit(ray, vol.worldBounds, 0.0f, FLT_MAX);
+        if (boxHit.hit && boxHit.tEnter < boxHit.tExit) {
+            hitVolume = true;
+            if (boxHit.tEnter < tVolEnter) tVolEnter = boxHit.tEnter;
+            if (boxHit.tExit > tVolExit)   tVolExit = boxHit.tExit;
+        }
+    }
+
+    if (hitVolume) {
+        tVolEnter = std::max(tVolEnter, 0.0f);
+        float tEnd = std::min(tVolExit, tSurface);
+
+        if (tVolEnter < tEnd) {
+            return integrate_volume(ray, scene, tVolEnter, tEnd, surface_color);
+        }
+    }
+}
+```
+
+**Why This Matters:**
+
+1. **Multiple volumes**: We union all volume AABBs to find the full interval where *any* volume exists.
+
+2. **Surface intersection**: `tEnd = std::min(tVolExit, tSurface)` stops ray marching at the first surface. If a mesh is inside the volume, we march up to the mesh and then use the surface color.
+
+3. **Behind-camera rejection**: `std::max(tVolEnter, 0.0f)` prevents marching in the negative direction.
 
 ---
 
-## Part 3: Volumetric Shadows - Transmittance to Light Sources
+## Part 3: Lighting & Physics - Phase Functions and Volumetric Shadows
 
-### Computing In-Scattering
+### Henyey-Greenstein Phase Function: Anisotropic Scattering
 
-At each sample point, we need to know how much light reaches it from each light source:
+Not all scattering is equal. Forward-scattering (like fog in headlights) and back-scattering (like clouds in sunlight) have different visual characteristics. We use the **Henyey-Greenstein phase function** (lines 407-417):
 
 ```cpp
-Vec3f compute_inscattering(const Vec3f& sample_pos, const Vec3f& view_dir,
-                           const Volume& vol, const Scene& scene) {
-    Vec3f total_light = {0.0f, 0.0f, 0.0f};
-    
-    for (const PointLight& light : scene.point_light_data__) {
-        Vec3f to_light = light.position - sample_pos;
-        fl distance = length(to_light);
-        to_light /= distance;  // Normalize
-        
-        // Compute transmittance from sample point to light (volumetric shadow)
-        Vec3f light_transmittance = compute_transmittance(sample_pos, to_light, distance, vol);
-        
-        // Apply inverse square attenuation
-        Vec3f light_intensity = light.radiance / (distance * distance);
-        
-        // Apply phase function for anisotropic scattering
-        fl phase = henyey_greenstein(-view_dir, to_light, vol.phase_g);
-        
-        total_light += light_transmittance * light_intensity * phase;
-    }
-    
-    return total_light;
+float phase_function(const Vec3f& dir_in, const Vec3f& dir_out, float g) noexcept
+{
+    Vec3f wi = dir_in.normalize();
+    Vec3f wo = dir_out.normalize();
+
+    float cos_theta = wi.dotProduct(wo);
+    cos_theta = clampF(cos_theta, -1.0f, 1.0f);
+
+    float denominator = 1.0f + g * g - 2.0f * g * cos_theta;
+    return (1.0f - g * g) / (4.0f * PI * denominator * std::sqrt(denominator));
 }
 ```
 
-### Beer's Law Application: Exponential Extinction
+**Parameter `g`:**
 
-To compute transmittance from the sample point to the light, we march *again* (nested marching):
+- `g = 0`: Isotropic scattering (equal in all directions)
+- `g > 0`: Forward scattering (light continues in roughly the same direction)
+- `g < 0`: Back scattering (light bounces back toward the source)
+
+The denominator `1.0f + g * g - 2.0f * g * cos_theta` creates the characteristic angular distribution. We clamp `cos_theta` to prevent numerical issues when directions are nearly parallel.
+
+### Volumetric Shadows: Calculating Transmittance Towards Light Sources
+
+Volumes don't just scatter light—they also block it. We need to calculate **transmittance** (what fraction of light reaches a point) for proper shadowing. Here's our implementation (lines 437-474):
 
 ```cpp
-Vec3f compute_transmittance(const Vec3f& from, const Vec3f& direction,
-                            fl max_distance, const Volume& vol) {
-    const fl shadow_step = 0.2f;  // Coarser steps for performance
-    Vec3f transmittance = {1.0f, 1.0f, 1.0f};
-    
-    fl t = 0.0f;
-    while (t < max_distance) {
-        Vec3f pos_world = from + direction * t;
-        Vec3f pos_index = transform_point(pos_world, vol.inv_transform);
+Vec3f GetVolumeTransmittance(const Vec3f& p, const Vec3f& lightPos, const Scene& scene)
+{
+    Vec3f dir = lightPos - p;
+    float dist = dir.length();
+    dir = dir.normalize();
+
+    Vec3f transmittance(1.0f, 1.0f, 1.0f); // Start white
+    float step_size = 0.4f; 
+
+    // TRICK: Multiplier to fake multiple scattering (0.5 lets light penetrate 2x deeper)
+    float shadow_trick = 0.3f; 
+
+    for (float t = 0; t < dist; t += step_size) {
+        Vec3f current_p = p + dir * t;
         
-        fl density = sample_grid(vol.grid, pos_index) * vol.density_multiplier;
-        
-        if (density > 1e-6f) {
-            Vec3f sigma_t = (vol.absorption + vol.scattering) * density;
-            Vec3f tau = sigma_t * shadow_step;
-            transmittance *= Vec3f{exp(-tau.x), exp(-tau.y), exp(-tau.z)};
+        for (const auto& vol : scene.volumes) {
+            float density = SampleDensity(vol, current_p);
             
-            // Early exit if nearly opaque
-            if (transmittance.x < 0.01f && transmittance.y < 0.01f && transmittance.z < 0.01f) {
-                return {0.0f, 0.0f, 0.0f};
+            if (density > 0.0f) {
+                // No averaging! Keep it Vec3f
+                Vec3f sigma_t = (vol.sigma_a + vol.sigma_s) * density;
+                
+                // Apply the trick to sigma_t
+                sigma_t = sigma_t * shadow_trick;
+
+                transmittance.x *= std::exp(-sigma_t.x * step_size);
+                transmittance.y *= std::exp(-sigma_t.y * step_size);
+                transmittance.z *= std::exp(-sigma_t.z * step_size);
             }
         }
-        
-        t += shadow_step;
+
+        // Optimization: If all channels are blocked
+        if (transmittance.x < 0.01f && transmittance.y < 0.01f && transmittance.z < 0.01f) 
+            return Vec3f(0,0,0);
     }
-    
+
     return transmittance;
 }
 ```
 
-**Beer's Law:**
+### Beer's Law Application: Modeling Exponential Extinction
 
-```text
-T(a → b) = exp(-∫ σ_t(x) dx)
+The core physics is in this line:
+
+```cpp
+transmittance.x *= std::exp(-sigma_t.x * step_size);
 ```
 
-For a homogeneous segment:
+This is **Beer's Law** (also called Beer-Lambert Law): light intensity decays exponentially with optical depth. For a step of length `dt` through a medium with extinction coefficient `sigma_t`, the transmittance is `exp(-sigma_t * dt)`.
 
-```text
-T = exp(-σ_t · Δt)
-```
-
-
+We apply this **per-channel** to support colored volumes (e.g., red wine absorbs green/blue light, appearing red).
 
 ---
 
-## Part 4: Henyey-Greenstein Phase Function - Anisotropic Scattering
+## Part 4: Refinement - From Scalar to Vector Transmittance
 
-### The Math Behind Phase Functions
+### The "Shadow Density Multiplier" Trick: Faking Multiple Scattering
 
-The phase function p(θ) describes how light scatters at a given angle θ between the incoming and outgoing directions. For isotropic scattering (uniform in all directions):
-
-```text
-p(θ) = 1 / (4π)
-```
-
-But clouds aren't isotropic! They exhibit **forward scattering** (light prefers to continue in the same direction). The Henyey-Greenstein phase function models this:
-
-```text
-p(θ, g) = (1 - g²) / (4π · (1 + g² - 2g·cos(θ))^(3/2))
-```
-
-where:
-- **g ∈ [-1, 1]** is the anisotropy parameter
-- g = 0: isotropic
-- g > 0: forward scattering (typical for clouds, g ≈ 0.6 to 0.8)
-- g < 0: backward scattering
-
-### Implementation
+Real volumetric scattering involves light bouncing multiple times inside the volume. But computing this properly requires path tracing through the volume itself—exponentially expensive. Instead, we use an **artist-friendly hack** (line 447):
 
 ```cpp
-fl henyey_greenstein(const Vec3f& view_dir, const Vec3f& light_dir, fl g) {
-    fl cos_theta = dot(view_dir, light_dir);
-    fl g2 = g * g;
-    fl denom = 1.0f + g2 - 2.0f * g * cos_theta;
-    
-    if (denom < 1e-6f) return 1.0f / (4.0f * M_PI);  // Avoid division by zero
-    
-    fl numerator = 1.0f - g2;
-    fl denominator = 4.0f * M_PI * pow(denom, 1.5f);
-    
-    return numerator / denominator;
-}
+float shadow_trick = 0.3f;
 ```
 
+By reducing `sigma_t` for shadow rays, we let more light penetrate the volume. This **approximates** the effect of multiple scattering: even deep inside a cloud, some light reaches you via indirect paths.
 
+**Why 0.3?**
 
----
+It's empirical. Values between 0.2-0.5 produce plausible-looking clouds. Too high (> 0.7) and the volume looks transparent; too low (< 0.1) and it's pitch black inside.
 
-## Part 5: Shortcuts
+### Integration with Surface Lighting
 
-### The "Shadow Density Multiplier" Trick
-
-
-```cpp
-// In compute_transmittance (shadow ray):
-fl shadow_density = density * 0.5f;  // Reduce density for shadow rays
-Vec3f sigma_t = (vol.absorption + vol.scattering) * shadow_density;
-```
-
-This is physically incorrect but visually pleasing. It simulates multiple scattering (where light bounces around inside the cloud before exiting) without the computational cost.
-
-This creates detailed clouds by adding variance to the light transport.
-
-### From Scalar to Vector: Colored Shadows
-
-Initially, we computed transmittance as a scalar:
+Volumes affect surfaces too. When shading a surface, we call `SampleLightRadiance` (lines 476-493):
 
 ```cpp
-fl transmittance = exp(-sigma_t * distance);
-```
-
-But colored volumes (like fire or stained glass fog) need **RGB transmittance**:
-
-```cpp
-Vec3f transmittance = {exp(-sigma_t.x * distance),
-                       exp(-sigma_t.y * distance),
-                       exp(-sigma_t.z * distance)};
-```
-This creates realistic colored fog effects.
-
----
-
-
-
-## Part 6: Integration Wiring - Blending Volumes with Surface Geometry
-
-### The Hybrid Rendering Loop
-
-Volumes and surfaces coexist in our scenes, so we needed to decide the rendering order:
-
-```cpp
-for (int lane = 0; lane < 8; lane++) {
-    if (!active_mask[lane]) continue;
-    
-    Vec3f ray_o = {ray_pack.o_x[lane], ray_pack.o_y[lane], ray_pack.o_z[lane]};
-    Vec3f ray_d = {ray_pack.d_x[lane], ray_pack.d_y[lane], ray_pack.d_z[lane]};
-    
-    fl t_surface = ray_pack.t_min[lane];  // Distance to nearest surface
-    Vec3f volume_radiance = {0.0f, 0.0f, 0.0f};
-    Vec3f transmittance = {1.0f, 1.0f, 1.0f};
-    
-    // 1. March through ALL volumes up to the surface
-    for (const Volume& vol : scene.volumes) {
-        fl t_near, t_far;
-        if (intersect_aabb(ray_o, ray_d, vol.aabb, t_near, t_far)) {
-            t_near = std::max(t_near, 0.0f);
-            t_far = std::min(t_far, t_surface);  // Clip to surface
-            
-            if (t_far > t_near) {
-                Vec3f vol_contrib = march_volume(ray_o, ray_d, t_near, t_far, vol, scene);
-                Vec3f vol_transmittance = compute_transmittance(ray_o, ray_d, t_far - t_near, vol);
-                
-                volume_radiance += transmittance * vol_contrib;
-                transmittance *= vol_transmittance;
-            }
-        }
+Vec3f SampleLightRadiance(const PointLight& light, const Vec3f& point, const Scene& scene) noexcept
+{
+    // 1. Check solid occlusion (Standard Shadow Ray)
+    if (InShadow(point, light, Vec3f(0,0,0), 0.001f, scene, 0.0f)) {
+        return Vec3f(0, 0, 0);
     }
+
+    // 2. Check Volume Attenuation (Now returns Vec3f)
+    Vec3f T = GetVolumeTransmittance(point, light.position, scene);
     
-    // 2. Add attenuated surface contribution
-    Vec3f surface_radiance = {color_block_float.r[lane],
-                              color_block_float.g[lane],
-                              color_block_float.b[lane]};
-    
-    Vec3f final_radiance = volume_radiance + transmittance * surface_radiance;
-    
-    color_block_float.r[lane] = final_radiance.x;
-    color_block_float.g[lane] = final_radiance.y;
-    color_block_float.b[lane] = final_radiance.z;
+    // 3. Distance Falloff
+    Vec3f L = light.position - point;
+    float d_sq = L.dotProduct(L);
+
+    // Multiply light intensity by Colored Transmittance
+    return light.intensity.elwiseMult(T) / d_sq;
 }
 ```
 
-**Key Insight:** Volumes are composited *in front of* surfaces using the over operator:
-
-```text
-C_final = C_volume + T_volume · C_surface
-```
-
-where T_volume is the transmittance through all volumes between the camera and the surface.
+This gives surfaces **volumetric shadows**: a surface behind red smoke appears red-tinted.
 
 ---
 
+## Part 5: Build System - CMakeLists.txt Wiring
+
+Getting NanoVDB to compile required careful dependency management. Here's our `CMakeLists.txt` (lines 1-90):
+
+```cmake
+cmake_minimum_required(VERSION 3.15)
+project(RayTracer)
+
+# ==========================================
+# 1. Dependencies
+# ==========================================
+
+# --- A. ZLIB (Compression for .zip VDBs) ---
+find_package(ZLIB REQUIRED)
+
+# --- B. Blosc (Compression for .nvdb) ---
+# We fetch and build Blosc from source to ensure it exists.
+include(FetchContent)
+message(STATUS "Fetching Blosc...")
+
+FetchContent_Declare(
+  blosc
+  GIT_REPOSITORY https://github.com/Blosc/c-blosc.git
+  GIT_TAG        v1.21.1
+  GIT_SHALLOW    TRUE
+)
+
+# Disable Blosc tests/benchmarks to speed up build
+set(BLOSC_INSTALL OFF CACHE BOOL "" FORCE)
+set(BLOSC_SHARED_LIB OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(BUILD_FUZZERS OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(blosc)
+
+# --- C. NanoVDB Headers ---
+message(STATUS "Fetching NanoVDB headers...")
+FetchContent_Declare(
+  nanovdb_headers
+  GIT_REPOSITORY https://github.com/AcademySoftwareFoundation/openvdb.git
+  GIT_TAG        v11.0.0
+  GIT_SHALLOW    TRUE
+)
+# We strictly populate, no build logic needed for NanoVDB itself
+FetchContent_GetProperties(nanovdb_headers)
+if(NOT nanovdb_headers_POPULATED)
+  FetchContent_Populate(nanovdb_headers)
+endif()
+set(NANOVDB_INCLUDE_DIR "${nanovdb_headers_SOURCE_DIR}/nanovdb")
+
+# ==========================================
+# 2. Define Ray Tracer Executable
+# ==========================================
+add_executable(raytracer
+    raytracer.cpp
+    parser.cpp
+    texture.cpp
+    # ... headers ...
+)
+
+# ==========================================
+# 3. Linking & Defines (The Fix)
+# ==========================================
+
+# Link ZLib and the Blosc static library we just built
+target_link_libraries(raytracer PRIVATE ZLIB::ZLIB blosc_static)
+
+# Includes
+target_include_directories(raytracer PRIVATE ${NANOVDB_INCLUDE_DIR})
+target_include_directories(raytracer PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+# Enable the features in NanoVDB
+target_compile_definitions(raytracer PRIVATE 
+    NANOVDB_USE_BLOSC=1 
+    NANOVDB_USE_ZIP=1
+    NANOVDB_USE_OPENVDB=0 
+    NANOVDB_USE_CUDA=0
+)
+
+target_compile_features(raytracer PRIVATE cxx_std_17)
+```
+
+**Critical Flags:**
+
+- **`NANOVDB_USE_BLOSC=1`**: Enables Blosc compression support (required for `.nvdb` files).
+- **`NANOVDB_USE_ZIP=1`**: Enables ZIP compression support (for older VDB formats).
+- **`NANOVDB_USE_OPENVDB=0`**: We don't link against full OpenVDB (heavy dependency).
+- **`NANOVDB_USE_CUDA=0`**: CPU-only rendering.
+
+Without these defines, NanoVDB's `io::readGrid()` would fail at compile-time.
+
+---
+
+## Conclusion
+
+Implementing volumetric rendering required integrating external data formats (NanoVDB), understanding participating media physics (Beer's Law, phase functions), and optimizing ray marching for performance (AABB culling, early termination). The result is a renderer capable of producing realistic fog, smoke, and clouds from industry-standard VDB files.
+
+**Key Takeaways:**
+
+1. **Data structures matter**: Separating `handle` (ownership) from `grid` (access) prevented memory corruption.
+2. **World-to-index mapping**: NanoVDB's `worldToIndexF()` handles the transformation transparently.
+3. **Shadow trick**: Reducing `sigma_t` for shadow rays fakes multiple scattering cheaply.
+4. **Per-channel Beer's Law**: Colored transmittance enables realistic colored fog/glass.
+
+The code is available at [fatih-ozdal/Raytracer](https://github.com/fatih-ozdal/Raytracer/tree/feature/volume).

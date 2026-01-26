@@ -51,7 +51,7 @@ struct Volume
 };
 ```
 
-**Key Design Decisions:**
+## Struct Fields
 
 1. **`GridHandle<nanovdb::HostBuffer> handle`**: This owns the memory buffer. NanoVDB requires the handle to stay alive for the grid pointer to remain valid.
 
@@ -149,15 +149,6 @@ if (s.contains("Volumes")) {
 }
 ```
 
-**What We Learned:**
-
-1. **Nested JSON handling**: Scene files might have `"Volumes": { "Volume": {...} }` or `"Volumes": [...]`. We check both cases.
-
-2. **Case-insensitive key lookup**: Different tools export VDB paths as "path", "Path", "file", or "File". We check all variants.
-
-3. **Move semantics**: We use `std::move(handle)` because `GridHandle` is non-copyable. The handle must live in the Volume struct.
-
-4. **Bounds extraction**: `vol.grid->worldBBox()` returns NanoVDB's `BBox` type. We convert it to our `AABB` format.
 
 ---
 
@@ -165,7 +156,7 @@ if (s.contains("Volumes")) {
 
 ### Ray Marching Implementation: Fixed Step-Size Integration
 
-The heart of volumetric rendering is ray marching—stepping along a ray through the volume and accumulating scattering and absorption. Here's our implementation in `raytracer.cpp` (lines 494-548):
+The heart of volumetric rendering is ray marching—stepping along a ray through the volume and accumulating scattering and absorption. Here's our implementation in `raytracer.cpp` :
 
 ```cpp
 Vec3f integrate_volume(const Ray& ray, const Scene& scene, float t_entry, float t_exit, const Vec3f& background_color)
@@ -262,7 +253,7 @@ float SampleDensity(const Volume& vol, const Vec3f& p)
 }
 ```
 
-**Critical Implementation Details:**
+##Details
 
 1. **`worldToIndexF`**: This is NanoVDB's built-in transformation from world coordinates to continuous index space. It handles the grid's internal transformation matrix.
 
@@ -274,42 +265,8 @@ float SampleDensity(const Volume& vol, const Vec3f& p)
 
 ### AABB Optimization: Clipping Ray Intervals to Volume Bounds
 
-Without bounding volumes, we'd ray-march through empty space forever. We clip the ray interval to the volume's AABB before integrating (from `ComputeColor`, lines 570-592):
+W We clip the ray interval to the volume's AABB before integrating :
 
-```cpp
-// 2. Volume Integration
-if (!scene.volumes.empty()) {
-    float tVolEnter = FLT_MAX;
-    float tVolExit = -FLT_MAX;
-    bool hitVolume = false;
-
-    for (const auto& vol : scene.volumes) {
-        AABBHit boxHit = IntersectAABB_EnterExit(ray, vol.worldBounds, 0.0f, FLT_MAX);
-        if (boxHit.hit && boxHit.tEnter < boxHit.tExit) {
-            hitVolume = true;
-            if (boxHit.tEnter < tVolEnter) tVolEnter = boxHit.tEnter;
-            if (boxHit.tExit > tVolExit)   tVolExit = boxHit.tExit;
-        }
-    }
-
-    if (hitVolume) {
-        tVolEnter = std::max(tVolEnter, 0.0f);
-        float tEnd = std::min(tVolExit, tSurface);
-
-        if (tVolEnter < tEnd) {
-            return integrate_volume(ray, scene, tVolEnter, tEnd, surface_color);
-        }
-    }
-}
-```
-
-**Why This Matters:**
-
-1. **Multiple volumes**: We union all volume AABBs to find the full interval where *any* volume exists.
-
-2. **Surface intersection**: `tEnd = std::min(tVolExit, tSurface)` stops ray marching at the first surface. If a mesh is inside the volume, we march up to the mesh and then use the surface color.
-
-3. **Behind-camera rejection**: `std::max(tVolEnter, 0.0f)` prevents marching in the negative direction.
 
 ---
 
@@ -400,7 +357,7 @@ We apply this **per-channel** to support colored volumes (e.g., red wine absorbs
 
 ---
 
-## Part 4: Refinement - From Scalar to Vector Transmittance
+## Part 4: Refinement
 
 ### The "Shadow Density Multiplier" Trick: Faking Multiple Scattering
 
@@ -412,141 +369,27 @@ float shadow_trick = 0.3f;
 
 By reducing `sigma_t` for shadow rays, we let more light penetrate the volume. This **approximates** the effect of multiple scattering: even deep inside a cloud, some light reaches you via indirect paths.
 
-**Why 0.3?**
+## Images
+Scale 02 04
+<img width="800" height="800" alt="bunny_scale_02" src="https://github.com/user-attachments/assets/2fb6925b-54b9-4fda-9b62-3bf47f711150" />
+<img width="800" height="800" alt="bunny_scale_04" src="https://github.com/user-attachments/assets/0f4816fe-b660-4cb2-a193-3b9abb9b4b74" />
+<img width="800" height="800" alt="green_radiance" src="https://github.com/user-attachments/assets/7bfa9470-800a-4e06-8e50-84ea555e2dd5" />
 
-It's empirical. Values between 0.2-0.5 produce plausible-looking clouds. Too high (> 0.7) and the volume looks transparent; too low (< 0.1) and it's pitch black inside.
+-Light inside the volume Step size 0.3 0.4 0.5
+<img width="800" height="800" alt="volume_test0_3" src="https://github.com/user-attachments/assets/c6ac095f-1d2b-4f99-b6aa-cb0aeea39b90" />
+<img width="800" height="800" alt="volume_test_0 4" src="https://github.com/user-attachments/assets/3b93123e-fb28-41c9-9d6a-972a499a75ad" />
+<img width="800" height="800" alt="volume_test_step_size0 5" src="https://github.com/user-attachments/assets/4dd43ff3-e886-4ca3-ae2f-6cb207e04c4f" />
 
-### Integration with Surface Lighting
 
-Volumes affect surfaces too. When shading a surface, we call `SampleLightRadiance` (lines 476-493):
 
-```cpp
-Vec3f SampleLightRadiance(const PointLight& light, const Vec3f& point, const Scene& scene) noexcept
-{
-    // 1. Check solid occlusion (Standard Shadow Ray)
-    if (InShadow(point, light, Vec3f(0,0,0), 0.001f, scene, 0.0f)) {
-        return Vec3f(0, 0, 0);
-    }
 
-    // 2. Check Volume Attenuation (Now returns Vec3f)
-    Vec3f T = GetVolumeTransmittance(point, light.position, scene);
-    
-    // 3. Distance Falloff
-    Vec3f L = light.position - point;
-    float d_sq = L.dotProduct(L);
 
-    // Multiply light intensity by Colored Transmittance
-    return light.intensity.elwiseMult(T) / d_sq;
-}
-```
 
-This gives surfaces **volumetric shadows**: a surface behind red smoke appears red-tinted.
-
----
-
-## Part 5: Build System - CMakeLists.txt Wiring
-
-Getting NanoVDB to compile required careful dependency management. Here's our `CMakeLists.txt` (lines 1-90):
-
-```cmake
-cmake_minimum_required(VERSION 3.15)
-project(RayTracer)
-
-# ==========================================
-# 1. Dependencies
-# ==========================================
-
-# --- A. ZLIB (Compression for .zip VDBs) ---
-find_package(ZLIB REQUIRED)
-
-# --- B. Blosc (Compression for .nvdb) ---
-# We fetch and build Blosc from source to ensure it exists.
-include(FetchContent)
-message(STATUS "Fetching Blosc...")
-
-FetchContent_Declare(
-  blosc
-  GIT_REPOSITORY https://github.com/Blosc/c-blosc.git
-  GIT_TAG        v1.21.1
-  GIT_SHALLOW    TRUE
-)
-
-# Disable Blosc tests/benchmarks to speed up build
-set(BLOSC_INSTALL OFF CACHE BOOL "" FORCE)
-set(BLOSC_SHARED_LIB OFF CACHE BOOL "" FORCE)
-set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
-set(BUILD_FUZZERS OFF CACHE BOOL "" FORCE)
-
-FetchContent_MakeAvailable(blosc)
-
-# --- C. NanoVDB Headers ---
-message(STATUS "Fetching NanoVDB headers...")
-FetchContent_Declare(
-  nanovdb_headers
-  GIT_REPOSITORY https://github.com/AcademySoftwareFoundation/openvdb.git
-  GIT_TAG        v11.0.0
-  GIT_SHALLOW    TRUE
-)
-# We strictly populate, no build logic needed for NanoVDB itself
-FetchContent_GetProperties(nanovdb_headers)
-if(NOT nanovdb_headers_POPULATED)
-  FetchContent_Populate(nanovdb_headers)
-endif()
-set(NANOVDB_INCLUDE_DIR "${nanovdb_headers_SOURCE_DIR}/nanovdb")
-
-# ==========================================
-# 2. Define Ray Tracer Executable
-# ==========================================
-add_executable(raytracer
-    raytracer.cpp
-    parser.cpp
-    texture.cpp
-    # ... headers ...
-)
-
-# ==========================================
-# 3. Linking & Defines (The Fix)
-# ==========================================
-
-# Link ZLib and the Blosc static library we just built
-target_link_libraries(raytracer PRIVATE ZLIB::ZLIB blosc_static)
-
-# Includes
-target_include_directories(raytracer PRIVATE ${NANOVDB_INCLUDE_DIR})
-target_include_directories(raytracer PRIVATE ${CMAKE_SOURCE_DIR}/include)
-
-# Enable the features in NanoVDB
-target_compile_definitions(raytracer PRIVATE 
-    NANOVDB_USE_BLOSC=1 
-    NANOVDB_USE_ZIP=1
-    NANOVDB_USE_OPENVDB=0 
-    NANOVDB_USE_CUDA=0
-)
-
-target_compile_features(raytracer PRIVATE cxx_std_17)
-```
-
-**Critical Flags:**
-
-- **`NANOVDB_USE_BLOSC=1`**: Enables Blosc compression support (required for `.nvdb` files).
-- **`NANOVDB_USE_ZIP=1`**: Enables ZIP compression support (for older VDB formats).
-- **`NANOVDB_USE_OPENVDB=0`**: We don't link against full OpenVDB (heavy dependency).
-- **`NANOVDB_USE_CUDA=0`**: CPU-only rendering.
-
-Without these defines, NanoVDB's `io::readGrid()` would fail at compile-time.
-
----
 
 ## Conclusion
 
 Implementing volumetric rendering required integrating external data formats (NanoVDB), understanding participating media physics (Beer's Law, phase functions), and optimizing ray marching for performance (AABB culling, early termination). The result is a renderer capable of producing realistic fog, smoke, and clouds from industry-standard VDB files.
 
-**Key Takeaways:**
-
-1. **Data structures matter**: Separating `handle` (ownership) from `grid` (access) prevented memory corruption.
-2. **World-to-index mapping**: NanoVDB's `worldToIndexF()` handles the transformation transparently.
-3. **Shadow trick**: Reducing `sigma_t` for shadow rays fakes multiple scattering cheaply.
 4. **Per-channel Beer's Law**: Colored transmittance enables realistic colored fog/glass.
 
 The code is available at [fatih-ozdal/Raytracer](https://github.com/fatih-ozdal/Raytracer/tree/feature/volume).
